@@ -1,0 +1,113 @@
+name: Deploy backend to Yandex Cloud
+
+# Runs the same deploy/yandex-cloud.sh used for local deploys — one code path,
+# not two that can drift apart.
+#
+# One-time setup, all in Settings -> Secrets and variables -> Actions:
+#
+#   Secrets
+#     YC_SA_JSON_CREDENTIALS  authorized key JSON of the DEPLOY service account
+#     ANTHROPIC_API_KEY       only read on the first run, to create the
+#                             Lockbox secret; afterwards the key lives in
+#                             Lockbox and this can be removed
+#   Variables
+#     YC_CLOUD_ID             yc config get cloud-id
+#     YC_FOLDER_ID            yc config get folder-id
+#     ALLOWED_ORIGINS         e.g. https://lirav.github.io
+#
+# Creating the deploy service account (once, locally):
+#   yc iam service-account create --name gh-deployer
+#   yc resource-manager folder add-access-binding <folder-id> \
+#     --role editor --subject serviceAccount:<gh-deployer-id>
+#   yc iam key create --service-account-name gh-deployer --output key.json
+#   # paste the contents of key.json into the YC_SA_JSON_CREDENTIALS secret
+#
+# `editor` is broad. It is what lets the script create the registry, service
+# account, Lockbox secret and container on the first run. To narrow it, create
+# those resources once by hand and drop the role to
+# container-registry.images.pusher + serverless-containers.admin.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "api/**"
+      - "server.js"
+      - "Dockerfile"
+      - "package.json"
+      - "package-lock.json"
+      - "src/**"
+      - "index.html"
+      - "vite.config.js"
+      - "deploy/yandex-cloud.sh"
+      - ".github/workflows/deploy-backend.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-backend
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check required configuration
+        env:
+          SA_JSON: ${{ secrets.YC_SA_JSON_CREDENTIALS }}
+          CLOUD_ID: ${{ vars.YC_CLOUD_ID }}
+          FOLDER_ID: ${{ vars.YC_FOLDER_ID }}
+        run: |
+          missing=""
+          [ -n "$SA_JSON" ]   || missing="$missing YC_SA_JSON_CREDENTIALS(secret)"
+          [ -n "$CLOUD_ID" ]  || missing="$missing YC_CLOUD_ID(variable)"
+          [ -n "$FOLDER_ID" ] || missing="$missing YC_FOLDER_ID(variable)"
+          if [ -n "$missing" ]; then
+            echo "::error::Missing configuration:$missing"
+            echo "See the comment at the top of .github/workflows/deploy-backend.yml"
+            exit 1
+          fi
+
+      - name: Install yc CLI
+        run: |
+          curl -sSL https://storage.yandexcloud.net/yandexcloud-yc/install.sh \
+            | bash -s -- -i "$HOME/yandex-cloud" -n
+          echo "$HOME/yandex-cloud/bin" >> "$GITHUB_PATH"
+
+      - name: Authenticate
+        env:
+          SA_JSON: ${{ secrets.YC_SA_JSON_CREDENTIALS }}
+        run: |
+          # Write the key outside the workspace so it cannot be picked up by a
+          # later step or baked into the image build context.
+          install -m 600 /dev/null "$RUNNER_TEMP/yc-key.json"
+          printf '%s' "$SA_JSON" > "$RUNNER_TEMP/yc-key.json"
+          yc config profile create gh 2>/dev/null || yc config profile activate gh
+          yc config set service-account-key "$RUNNER_TEMP/yc-key.json"
+          yc config set cloud-id  "${{ vars.YC_CLOUD_ID }}"
+          yc config set folder-id "${{ vars.YC_FOLDER_ID }}"
+          yc config list | grep -v service-account-key
+
+      - name: Deploy
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          ALLOWED_ORIGINS: ${{ vars.ALLOWED_ORIGINS }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: ./deploy/yandex-cloud.sh
+
+      - name: Remove credentials
+        if: always()
+        run: rm -f "$RUNNER_TEMP/yc-key.json"
+
+      - name: Report the container URL
+        run: |
+          URL="$(yc serverless container get --name chitaem-vmeste --format json | jq -r .url)"
+          echo "Backend: $URL"
+          {
+            echo "### Backend deployed"
+            echo ""
+            echo "\`$URL\`"
+            echo ""
+            echo "Set this as the \`API_URL\` repository variable so the Pages build points at it."
+          } >> "$GITHUB_STEP_SUMMARY"

@@ -80,17 +80,6 @@ for ROLE in container-registry.images.puller lockbox.payloadViewer; do
     && echo "  + $ROLE" || echo "  = $ROLE (already granted)"
 done
 
-# --- Build & push -----------------------------------------------------------
-IMAGE="cr.yandex/$REGISTRY_ID/$CONTAINER_NAME:$IMAGE_TAG"
-say "Building $IMAGE"
-# Serverless Containers run on amd64 — force it, so the image also works when
-# built on an Apple Silicon Mac.
-docker build --platform linux/amd64 -t "$IMAGE" .
-
-say "Pushing to registry"
-yc container registry configure-docker
-docker push "$IMAGE"
-
 # --- Secret -----------------------------------------------------------------
 say "Lockbox secret «$SECRET_NAME»"
 SECRET_ID="$(yc lockbox secret get --name "$SECRET_NAME" --format json 2>/dev/null | jget id || true)"
@@ -109,21 +98,39 @@ fi
 secret_current_version() {
   yc lockbox secret get --id "$SECRET_ID" --format json 2>/dev/null | {
     if command -v jq >/dev/null 2>&1; then jq -r '.current_version.id // empty'
-    else python3 -c 'import sys,json;print(json.load(sys.stdin).get("current_version",{}).get("id",""))'
+    else python3 -c 'import sys,json
+try: print(json.load(sys.stdin).get("current_version",{}).get("id",""))
+except Exception: print("")' 2>/dev/null
     fi
-  }
+  } || true
 }
 secret_newest_version() {
   yc lockbox secret list-versions --id "$SECRET_ID" --format json 2>/dev/null | {
     if command -v jq >/dev/null 2>&1; then jq -r '.[0].id // empty'
-    else python3 -c 'import sys,json;d=json.load(sys.stdin);print(d[0]["id"] if d else "")'
+    else python3 -c 'import sys,json
+try:
+    d=json.load(sys.stdin); print(d[0]["id"] if d else "")
+except Exception: print("")' 2>/dev/null
     fi
-  }
+  } || true
 }
-SECRET_VERSION_ID="$(secret_current_version)"
-[ -n "$SECRET_VERSION_ID" ] || SECRET_VERSION_ID="$(secret_newest_version)"
+# `set -e` aborts on a failing command substitution, so swallow the status
+# here — an empty result is the signal to try the next lookup, not an error.
+SECRET_VERSION_ID="$(secret_current_version || true)"
+[ -n "$SECRET_VERSION_ID" ] || SECRET_VERSION_ID="$(secret_newest_version || true)"
 [ -n "$SECRET_VERSION_ID" ] || { echo "Could not resolve a version for secret $SECRET_ID"; exit 1; }
 echo "secret version: $SECRET_VERSION_ID"
+
+# --- Build & push -----------------------------------------------------------
+IMAGE="cr.yandex/$REGISTRY_ID/$CONTAINER_NAME:$IMAGE_TAG"
+say "Building $IMAGE"
+# Serverless Containers run on amd64 — force it, so the image also works when
+# built on an Apple Silicon Mac.
+docker build --platform linux/amd64 -t "$IMAGE" .
+
+say "Pushing to registry"
+yc container registry configure-docker
+docker push "$IMAGE"
 
 # --- Container --------------------------------------------------------------
 say "Serverless container «$CONTAINER_NAME»"
@@ -152,6 +159,6 @@ yc serverless container revision deploy "${DEPLOY_ARGS[@]}"
 say "Allowing public access"
 yc serverless container allow-unauthenticated-invoke "$CONTAINER_NAME"
 
-URL="$(yc serverless container get --name "$CONTAINER_NAME" --format json | jget url)"
+URL="$(yc serverless container get --name "$CONTAINER_NAME" --format json | jget url || true)"
 say "Done"
 echo "  $URL"

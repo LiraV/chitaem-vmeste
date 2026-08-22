@@ -7,3 +7,6 @@ dist
 .env.*
 !.env.example
 .DS_Store
+key.json
+*.pem
+authorized_key*.json

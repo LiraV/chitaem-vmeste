@@ -112,6 +112,40 @@ frontend to GitHub Pages → Run workflow.
 Если `API_URL` не задан, сборка падает с понятной ошибкой — намеренно: иначе
 интерфейс бы открылся, а собеседник молчал.
 
+### Автоматический деплой бэкенда
+
+Чтобы не запускать скрипт руками, деплой может делать GitHub Actions —
+`.github/workflows/deploy-backend.yml` запускает **тот же самый**
+`deploy/yandex-cloud.sh`, просто на раннере.
+
+Разовая настройка. Сначала локально создать сервисный аккаунт для деплоя:
+
+```bash
+yc iam service-account create --name gh-deployer
+yc resource-manager folder add-access-binding <folder-id> \
+  --role editor --subject serviceAccount:<gh-deployer-id>
+yc iam key create --service-account-name gh-deployer --output key.json
+```
+
+Затем в **Settings → Secrets and variables → Actions**:
+
+| | Имя | Значение |
+| --- | --- | --- |
+| Secret | `YC_SA_JSON_CREDENTIALS` | содержимое `key.json` |
+| Secret | `ANTHROPIC_API_KEY` | ключ Anthropic (нужен только при первом запуске — дальше он живёт в Lockbox, и секрет можно удалить) |
+| Variable | `YC_CLOUD_ID` | `yc config get cloud-id` |
+| Variable | `YC_FOLDER_ID` | `yc config get folder-id` |
+| Variable | `ALLOWED_ORIGINS` | `https://lirav.github.io` |
+
+После этого бэкенд переезжает сам при каждом пуше в `main`, а адрес контейнера
+печатается в сводке запуска.
+
+Роль `editor` широкая — именно она позволяет скрипту создать реестр, сервисный
+аккаунт, секрет и контейнер при первом запуске. Если хочется сузить: создайте
+эти ресурсы один раз руками и понизьте роль до
+`container-registry.images.pusher` + `serverless-containers.admin`.
+`key.json` не коммитьте — он уже покрыт `.gitignore`, но проверьте.
+
 ### Обновление ключа
 
 ```bash
