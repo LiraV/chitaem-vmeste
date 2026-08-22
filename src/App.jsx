@@ -130,8 +130,15 @@ ${companion.prompt}
 }
 
 // The model and the API key live on the server (see api/_claude.js); the
-// browser only ever talks to our own /api/claude endpoint.
-const API_ENDPOINT = "/api/claude";
+// browser never holds them.
+//
+// Same-origin deploy (one container serves UI + API): leave VITE_API_URL unset
+// and the relative path is used.
+// Split deploy (UI on GitHub Pages, API in Yandex Cloud): set VITE_API_URL to
+// the backend origin at build time, e.g.
+//   VITE_API_URL=https://<id>.containers.yandexcloud.net
+const API_BASE = (import.meta.env?.VITE_API_URL || "").trim().replace(/\/+$/, "");
+const API_ENDPOINT = API_BASE ? `${API_BASE}/api/claude` : "/api/claude";
 
 async function apiCall(body) {
   const response = await fetch(API_ENDPOINT, {

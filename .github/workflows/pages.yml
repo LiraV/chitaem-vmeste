@@ -1,0 +1,76 @@
+name: Deploy frontend to GitHub Pages
+
+# The UI is published to GitHub Pages; the API lives in Yandex Cloud.
+# Requires:
+#   Settings -> Pages -> Source: GitHub Actions
+#   Settings -> Secrets and variables -> Actions -> Variables -> API_URL
+#     e.g. https://<container_id>.containers.yandexcloud.net
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Let a running deploy finish; queue at most one more.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check API_URL is configured
+        env:
+          API_URL: ${{ vars.API_URL }}
+        run: |
+          if [ -z "$API_URL" ]; then
+            echo "::error::Repository variable API_URL is not set."
+            echo "The frontend would be built with a relative /api/claude path,"
+            echo "which does not exist on GitHub Pages, so the app would load"
+            echo "but every request to the model would fail."
+            echo
+            echo "Set it under Settings -> Secrets and variables -> Actions -> Variables"
+            echo "to your Yandex Cloud container URL, e.g."
+            echo "  https://<container_id>.containers.yandexcloud.net"
+            exit 1
+          fi
+          echo "API_URL = $API_URL"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Build
+        env:
+          # Project sites are served from /<repo>/, so assets need that prefix.
+          VITE_BASE: /${{ github.event.repository.name }}/
+          VITE_API_URL: ${{ vars.API_URL }}
+        run: |
+          npm run build
+          # The app keeps its state in memory rather than the URL, but serving
+          # the shell for unknown paths avoids a bare GitHub 404 on a stray link.
+          cp dist/index.html dist/404.html
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

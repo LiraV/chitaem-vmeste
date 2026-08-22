@@ -1,6 +1,14 @@
-import { handleClaudeRequest } from "./_claude.js";
+import { handleClaudeRequest, corsHeaders } from "./_claude.js";
 
 export default async function handler(req, res) {
+  for (const [k, v] of Object.entries(corsHeaders(req.headers?.origin))) {
+    res.setHeader(k, v);
+  }
+
+  if (req.method === "OPTIONS") {
+    return res.status(204).end();
+  }
+
   if (req.method !== "POST") {
     res.setHeader("Allow", "POST");
     return res.status(405).json({ error: { type: "method_not_allowed", message: "Use POST" } });

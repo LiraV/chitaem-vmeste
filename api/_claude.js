@@ -149,4 +149,46 @@ export async function handleClaudeRequest(input) {
   return { status: upstream.status, body };
 }
 
-export const CORS_SAFE_METHODS = ["POST", "OPTIONS"];
+/**
+ * CORS. Only needed when the frontend is served from a different origin than
+ * this proxy — e.g. the UI on GitHub Pages and the backend in Yandex Cloud.
+ *
+ * ALLOWED_ORIGINS is a comma-separated allowlist, e.g.
+ *   ALLOWED_ORIGINS=https://lirav.github.io
+ * When it is unset no CORS headers are sent at all, which is correct for the
+ * same-origin setup (frontend and API served by the same container).
+ *
+ * Note: CORS is a browser rule, not access control. It stops other websites
+ * from spending your quota via their visitors' browsers; it does not stop
+ * anyone from calling the endpoint directly with curl.
+ */
+function allowlist() {
+  return (process.env.ALLOWED_ORIGINS || "")
+    .split(",")
+    .map((o) => o.trim().replace(/\/+$/, ""))
+    .filter(Boolean);
+}
+
+/**
+ * @param {string|undefined|null} origin The request's Origin header.
+ * @returns {Record<string,string>} Headers to merge into the response. Empty
+ *          when the origin is absent or not allowed.
+ */
+export function corsHeaders(origin) {
+  if (!origin) return {};
+  const allowed = allowlist();
+  if (allowed.length === 0) return {};
+
+  const normalized = origin.replace(/\/+$/, "");
+  const match = allowed.includes("*") || allowed.includes(normalized);
+  if (!match) return {};
+
+  return {
+    "access-control-allow-origin": normalized,
+    "access-control-allow-methods": "POST, OPTIONS",
+    "access-control-allow-headers": "content-type",
+    "access-control-max-age": "86400",
+    // The response varies by Origin, so caches must not reuse it across sites.
+    vary: "Origin",
+  };
+}

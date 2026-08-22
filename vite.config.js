@@ -22,6 +22,12 @@ function claudeApiDevServer(env) {
           res.end(JSON.stringify(body));
         };
 
+        if (req.method === "OPTIONS") {
+          res.statusCode = 204;
+          res.end();
+          return;
+        }
+
         if (req.method !== "POST") {
           return json(405, { error: { type: "method_not_allowed", message: "Use POST" } });
         }
@@ -52,6 +58,11 @@ export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), "");
 
   return {
+    // GitHub Pages serves a project site from /<repo>/, so assets must be
+    // referenced from that prefix. VITE_BASE is set by the Pages workflow;
+    // everywhere else (Yandex Cloud, Vercel, Netlify, dev) the default "/" is
+    // correct.
+    base: env.VITE_BASE || "/",
     plugins: [react(), claudeApiDevServer(env)],
     build: {
       outDir: "dist",

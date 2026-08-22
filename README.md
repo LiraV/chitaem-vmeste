@@ -44,62 +44,104 @@ npm run dev               # http://localhost:5173
 
 ## Деплой
 
-Нужен хостинг, который умеет выполнять серверный код: браузеру нельзя доверить
-ключ API, поэтому чисто статический хостинг (GitHub Pages, Object Storage) не
-подойдёт — интерфейс откроется, но собеседник отвечать не будет.
+Схема: **интерфейс на GitHub Pages, бэкенд в Яндекс Облаке.**
 
-`server.js` раздаёт и интерфейс, и `/api/claude` с одного адреса, поэтому CORS
-настраивать не нужно нигде.
+```
+Браузер ──> lirav.github.io/chitaem-vmeste/   (статика, GitHub Pages)
+   │
+   └──────> <id>.containers.yandexcloud.net   (Node-сервер, Яндекс Облако)
+                     └──> api.anthropic.com   (ключ живёт только здесь)
+```
 
-### Яндекс Облако (Serverless Containers) — основной вариант
+Ключ API нельзя класть в браузер, поэтому Pages в одиночку не справится — он
+только раздаёт статику. Запросы к модели уходят на отдельный бэкенд.
+
+Порядок важен: **сначала бэкенд**, потом фронтенд — при сборке фронтенда нужно
+знать адрес бэкенда.
+
+### Шаг 1. Бэкенд в Яндекс Облако
 
 ```bash
 yc init                                   # один раз
-ANTHROPIC_API_KEY=sk-ant-... ./deploy/yandex-cloud.sh
+
+ANTHROPIC_API_KEY=sk-ant-... \
+ALLOWED_ORIGINS=https://lirav.github.io \
+  ./deploy/yandex-cloud.sh
 ```
 
-Скрипт идемпотентный — повторный запуск просто выкатывает новую ревизию.
-Он создаёт реестр образов, сервисный аккаунт с нужными ролями, секрет в
-Lockbox, собирает и пушит образ, деплоит ревизию и открывает публичный доступ.
-В конце печатает адрес вида `https://<id>.containers.yandexcloud.net/`.
+`ALLOWED_ORIGINS` — домен, с которого браузер будет обращаться к API. Только
+схема и хост, **без пути и без слэша в конце**: origin у GitHub Pages это
+`https://lirav.github.io`, а не `https://lirav.github.io/chitaem-vmeste/`.
 
-Ключ хранится в **Lockbox** и подставляется в контейнер переменной окружения —
-в образ он не попадает и в репозитории его нет.
+Скрипт идемпотентный — повторный запуск выкатывает новую ревизию. Он создаёт
+реестр образов, сервисный аккаунт с ролями, секрет в Lockbox, собирает и пушит
+образ, деплоит ревизию и открывает публичный доступ. В конце печатает адрес:
 
-Параметры можно переопределить переменными окружения:
+```
+https://<container_id>.containers.yandexcloud.net
+```
+
+**Запишите его — он нужен на шаге 2.**
+
+Ключ хранится в **Lockbox** и подставляется переменной окружения: в образ он не
+попадает и в репозитории его нет.
 
 | Переменная | По умолчанию | |
 | --- | --- | --- |
+| `ALLOWED_ORIGINS` | пусто | домены для CORS |
 | `CONTAINER_NAME` | `chitaem-vmeste` | имя контейнера |
 | `MEMORY` | `256MB` | память ревизии |
 | `CORES` | `1` | ядра |
 | `TIMEOUT` | `300s` | таймаут запроса (максимум у платформы — 10 мин) |
 
-Обновить ключ позже:
+### Шаг 2. Фронтенд на GitHub Pages
+
+Две настройки в репозитории, оба раза — один раз:
+
+1. **Settings → Pages → Source: GitHub Actions**
+   (если стоит «Deploy from a branch» — обязательно переключить, иначе Pages
+   выложит исходники без сборки и страница будет пустой)
+
+2. **Settings → Secrets and variables → Actions → Variables → New variable**
+   Имя `API_URL`, значение — адрес контейнера с шага 1.
+
+Дальше всё само: `.github/workflows/pages.yml` собирает фронтенд при каждом
+пуше в `main` и публикует. Запустить вручную — вкладка Actions → Deploy
+frontend to GitHub Pages → Run workflow.
+
+Если `API_URL` не задан, сборка падает с понятной ошибкой — намеренно: иначе
+интерфейс бы открылся, а собеседник молчал.
+
+### Обновление ключа
 
 ```bash
 yc lockbox secret add-version --name chitaem-vmeste-anthropic \
   --payload "[{'key': 'ANTHROPIC_API_KEY', 'text_value': 'sk-ant-НОВЫЙ'}]"
-./deploy/yandex-cloud.sh          # ревизия подхватит новую версию секрета
+./deploy/yandex-cloud.sh
 ```
 
-Полезное:
+### Диагностика
 
 ```bash
-yc serverless container get --name chitaem-vmeste          # адрес и статус
-yc logging read --group-name default --follow              # логи
-yc serverless container revision list --container-name chitaem-vmeste
+yc serverless container get --name chitaem-vmeste       # адрес и статус
+yc logging read --group-name default --follow           # логи бэкенда
+curl -X POST -H 'content-type: application/json' \
+  -d '{"messages":[{"role":"user","content":"привет"}]}' \
+  https://<container_id>.containers.yandexcloud.net/api/claude
 ```
 
-Образ собирается под `linux/amd64` — Serverless Containers работают только на
-этой архитектуре, так что сборка с Apple Silicon тоже пройдёт корректно.
+Если интерфейс открывается, но собеседник молчит — почти всегда одно из двух:
+`API_URL` не задан (или задан с ошибкой), либо `ALLOWED_ORIGINS` на бэкенде не
+совпадает с доменом Pages. В консоли браузера это видно как ошибка CORS.
 
-### Другие варианты
+### Всё на одной машине
+
+Бэкенд-контейнер раздаёт и собранный интерфейс тоже, так что Pages не
+обязателен — можно открыть адрес контейнера напрямую. Тогда `ALLOWED_ORIGINS`
+не нужен вовсе: origin один.
 
 <details>
 <summary>Vercel</summary>
-
-Конфиг в `vercel.json`, функция — в `api/claude.js`.
 
 ```bash
 npm i -g vercel
@@ -111,8 +153,6 @@ vercel --prod
 
 <details>
 <summary>Netlify</summary>
-
-Конфиг в `netlify.toml`, функция — в `netlify/functions/claude.js`.
 
 ```bash
 npm i -g netlify-cli
@@ -132,14 +172,6 @@ docker run -p 3000:3000 -e ANTHROPIC_API_KEY=sk-ant-... chitaem-vmeste
 Без Docker: `npm ci && npm run build && npm start`.
 </details>
 
-### GitHub Pages не подойдёт
-
-Pages — статический хостинг: он не выполняет серверный код, значит `/api/claude`
-там работать не может, а ключ API положить некуда. Если Pages включён на этом
-репозитории в режиме «Deploy from a branch», он выкладывает исходники как есть
-и отдаёт пустую страницу — сборка там не запускается. Его стоит выключить:
-**Settings → Pages → Source: None**.
-
 ---
 
 ## Структура
@@ -150,7 +182,8 @@ src/main.tsx            точка входа React
 src/App.jsx             всё приложение
 src/storage.ts          хранилище на localStorage
 api/_claude.js          прокси к Anthropic API (общая логика)
-deploy/yandex-cloud.sh  деплой в Яндекс Облако
+deploy/yandex-cloud.sh  деплой бэкенда в Яндекс Облако
+.github/workflows/     CI и публикация фронтенда на Pages
 api/claude.js           адаптер для Vercel
 netlify/functions/      адаптер для Netlify
 server.js               прод-сервер для Docker/VPS

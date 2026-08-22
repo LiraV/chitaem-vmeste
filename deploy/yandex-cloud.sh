@@ -26,6 +26,12 @@ CORES="${CORES:-1}"
 # Anthropic calls can take a while; well under the 10 min ceiling.
 TIMEOUT="${TIMEOUT:-300s}"
 
+# Origins allowed to call /api/claude from a browser. Needed when the frontend
+# is hosted elsewhere (GitHub Pages) — scheme + host only, no path, no trailing
+# slash. Leave empty for a same-origin deploy.
+#   ALLOWED_ORIGINS=https://lirav.github.io
+ALLOWED_ORIGINS="${ALLOWED_ORIGINS:-}"
+
 say() { printf '\n\033[1;36m==> %s\033[0m\n' "$1"; }
 
 # Extract a top-level string field from JSON on stdin. Uses jq when available
@@ -125,14 +131,23 @@ yc serverless container get --name "$CONTAINER_NAME" >/dev/null 2>&1 \
   || yc serverless container create --name "$CONTAINER_NAME" >/dev/null
 
 say "Deploying revision"
-yc serverless container revision deploy \
-  --container-name "$CONTAINER_NAME" \
-  --image "$IMAGE" \
-  --cores "$CORES" \
-  --memory "$MEMORY" \
-  --execution-timeout "$TIMEOUT" \
-  --service-account-id "$SA_ID" \
+DEPLOY_ARGS=(
+  --container-name "$CONTAINER_NAME"
+  --image "$IMAGE"
+  --cores "$CORES"
+  --memory "$MEMORY"
+  --execution-timeout "$TIMEOUT"
+  --service-account-id "$SA_ID"
   --secret "id=$SECRET_ID,version-id=$SECRET_VERSION_ID,key=ANTHROPIC_API_KEY,environment-variable=ANTHROPIC_API_KEY"
+)
+if [ -n "$ALLOWED_ORIGINS" ]; then
+  echo "CORS allowlist: $ALLOWED_ORIGINS"
+  DEPLOY_ARGS+=(--environment "ALLOWED_ORIGINS=$ALLOWED_ORIGINS")
+else
+  echo "No ALLOWED_ORIGINS set — same-origin only."
+fi
+
+yc serverless container revision deploy "${DEPLOY_ARGS[@]}"
 
 say "Allowing public access"
 yc serverless container allow-unauthenticated-invoke "$CONTAINER_NAME"

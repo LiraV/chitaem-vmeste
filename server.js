@@ -8,7 +8,7 @@ import { createServer } from "node:http";
 import { readFile, stat } from "node:fs/promises";
 import { extname, join, normalize, resolve, sep, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { handleClaudeRequest } from "./api/_claude.js";
+import { handleClaudeRequest, corsHeaders } from "./api/_claude.js";
 
 const PORT = Number(process.env.PORT) || 3000;
 const DIST = resolve(dirname(fileURLToPath(import.meta.url)), "dist");
@@ -27,9 +27,9 @@ const MIME = {
   ".woff2": "font/woff2",
 };
 
-function sendJson(res, status, body) {
+function sendJson(res, status, body, extraHeaders = {}) {
   const payload = JSON.stringify(body);
-  res.writeHead(status, { "content-type": "application/json; charset=utf-8" });
+  res.writeHead(status, { "content-type": "application/json; charset=utf-8", ...extraHeaders });
   res.end(payload);
 }
 
@@ -89,15 +89,25 @@ const server = createServer(async (req, res) => {
   const { pathname } = new URL(req.url, "http://localhost");
 
   if (pathname === "/api/claude") {
-    if (req.method !== "POST") return sendJson(res, 405, { error: { type: "method_not_allowed", message: "Use POST" } });
+    const cors = corsHeaders(req.headers.origin);
+
+    // Preflight: the browser asks before sending a cross-origin POST.
+    if (req.method === "OPTIONS") {
+      res.writeHead(204, cors);
+      return res.end();
+    }
+
+    if (req.method !== "POST") {
+      return sendJson(res, 405, { error: { type: "method_not_allowed", message: "Use POST" } }, cors);
+    }
     let input;
     try {
       input = JSON.parse(await readBody(req));
     } catch {
-      return sendJson(res, 400, { error: { type: "invalid_request_error", message: "Body is not valid JSON" } });
+      return sendJson(res, 400, { error: { type: "invalid_request_error", message: "Body is not valid JSON" } }, cors);
     }
     const { status, body } = await handleClaudeRequest(input);
-    return sendJson(res, status, body);
+    return sendJson(res, status, body, cors);
   }
 
   if (req.method !== "GET" && req.method !== "HEAD") {
