@@ -45,23 +45,72 @@ npm run dev               # http://localhost:5173
 ## Деплой
 
 Нужен хостинг, который умеет выполнять серверный код: браузеру нельзя доверить
-ключ API, поэтому чисто статический хостинг (GitHub Pages, S3) не подойдёт —
-интерфейс откроется, но собеседник отвечать не будет.
+ключ API, поэтому чисто статический хостинг (GitHub Pages, Object Storage) не
+подойдёт — интерфейс откроется, но собеседник отвечать не будет.
 
-Везде нужно задать `ANTHROPIC_API_KEY` в переменных окружения.
+`server.js` раздаёт и интерфейс, и `/api/claude` с одного адреса, поэтому CORS
+настраивать не нужно нигде.
 
-### Vercel
+### Яндекс Облако (Serverless Containers) — основной вариант
 
-Конфиг уже в `vercel.json`, функция — в `api/claude.js`.
+```bash
+yc init                                   # один раз
+ANTHROPIC_API_KEY=sk-ant-... ./deploy/yandex-cloud.sh
+```
+
+Скрипт идемпотентный — повторный запуск просто выкатывает новую ревизию.
+Он создаёт реестр образов, сервисный аккаунт с нужными ролями, секрет в
+Lockbox, собирает и пушит образ, деплоит ревизию и открывает публичный доступ.
+В конце печатает адрес вида `https://<id>.containers.yandexcloud.net/`.
+
+Ключ хранится в **Lockbox** и подставляется в контейнер переменной окружения —
+в образ он не попадает и в репозитории его нет.
+
+Параметры можно переопределить переменными окружения:
+
+| Переменная | По умолчанию | |
+| --- | --- | --- |
+| `CONTAINER_NAME` | `chitaem-vmeste` | имя контейнера |
+| `MEMORY` | `256MB` | память ревизии |
+| `CORES` | `1` | ядра |
+| `TIMEOUT` | `300s` | таймаут запроса (максимум у платформы — 10 мин) |
+
+Обновить ключ позже:
+
+```bash
+yc lockbox secret add-version --name chitaem-vmeste-anthropic \
+  --payload "[{'key': 'ANTHROPIC_API_KEY', 'text_value': 'sk-ant-НОВЫЙ'}]"
+./deploy/yandex-cloud.sh          # ревизия подхватит новую версию секрета
+```
+
+Полезное:
+
+```bash
+yc serverless container get --name chitaem-vmeste          # адрес и статус
+yc logging read --group-name default --follow              # логи
+yc serverless container revision list --container-name chitaem-vmeste
+```
+
+Образ собирается под `linux/amd64` — Serverless Containers работают только на
+этой архитектуре, так что сборка с Apple Silicon тоже пройдёт корректно.
+
+### Другие варианты
+
+<details>
+<summary>Vercel</summary>
+
+Конфиг в `vercel.json`, функция — в `api/claude.js`.
 
 ```bash
 npm i -g vercel
-vercel                      # превью
+vercel
 vercel env add ANTHROPIC_API_KEY
 vercel --prod
 ```
+</details>
 
-### Netlify
+<details>
+<summary>Netlify</summary>
 
 Конфиг в `netlify.toml`, функция — в `netlify/functions/claude.js`.
 
@@ -70,10 +119,10 @@ npm i -g netlify-cli
 netlify env:set ANTHROPIC_API_KEY sk-ant-...
 netlify deploy --prod
 ```
+</details>
 
-### Docker / Render / Railway / Fly / VPS
-
-Собственный сервер в `server.js` раздаёт `dist/` и обслуживает `/api/claude`.
+<details>
+<summary>Docker где угодно (Render, Railway, Fly, VPS)</summary>
 
 ```bash
 docker build -t chitaem-vmeste .
@@ -81,6 +130,15 @@ docker run -p 3000:3000 -e ANTHROPIC_API_KEY=sk-ant-... chitaem-vmeste
 ```
 
 Без Docker: `npm ci && npm run build && npm start`.
+</details>
+
+### GitHub Pages не подойдёт
+
+Pages — статический хостинг: он не выполняет серверный код, значит `/api/claude`
+там работать не может, а ключ API положить некуда. Если Pages включён на этом
+репозитории в режиме «Deploy from a branch», он выкладывает исходники как есть
+и отдаёт пустую страницу — сборка там не запускается. Его стоит выключить:
+**Settings → Pages → Source: None**.
 
 ---
 
@@ -92,6 +150,7 @@ src/main.tsx            точка входа React
 src/App.jsx             всё приложение
 src/storage.ts          хранилище на localStorage
 api/_claude.js          прокси к Anthropic API (общая логика)
+deploy/yandex-cloud.sh  деплой в Яндекс Облако
 api/claude.js           адаптер для Vercel
 netlify/functions/      адаптер для Netlify
 server.js               прод-сервер для Docker/VPS

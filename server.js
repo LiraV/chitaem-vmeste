@@ -106,6 +106,8 @@ const server = createServer(async (req, res) => {
   return serveStatic(res, pathname);
 });
 
-server.listen(PORT, () => {
-  console.log(`chitaem-vmeste listening on http://localhost:${PORT}`);
+// Bind all interfaces: container runtimes (Yandex Serverless Containers,
+// Docker) route external traffic to the container IP, not to loopback.
+server.listen(PORT, "0.0.0.0", () => {
+  console.log(`chitaem-vmeste listening on 0.0.0.0:${PORT}`);
 });
