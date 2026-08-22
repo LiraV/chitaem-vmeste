@@ -1,4 +1,4 @@
-import { handleClaudeRequest, corsHeaders } from "./_claude.js";
+import { handleClaudeRequest, corsHeaders } from "./_llm.js";
 
 export default async function handler(req, res) {
   for (const [k, v] of Object.entries(corsHeaders(req.headers?.origin))) {

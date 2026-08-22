@@ -1,4 +1,4 @@
-import { handleClaudeRequest, corsHeaders } from "../../api/_claude.js";
+import { handleClaudeRequest, corsHeaders } from "../../api/_llm.js";
 
 export default async (request) => {
   const cors = corsHeaders(request.headers.get("origin"));

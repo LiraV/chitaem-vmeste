@@ -4,8 +4,9 @@
 прочитанное и никогда не спойлерит дальше твоей закладки, цитаты, заметки,
 карта героев, викторины и дебаты.
 
-React + Vite. Запросы к модели идут через собственный серверный эндпоинт, ключ
-API остаётся на сервере.
+React + Vite. Запросы к модели идут через собственный серверный эндпоинт —
+ключ никогда не попадает в браузер. Поддерживаются два поставщика модели:
+**Yandex Foundation Models** (по умолчанию) и **Anthropic Claude**.
 
 ---
 
@@ -13,7 +14,7 @@ API остаётся на сервере.
 
 ```bash
 npm install
-cp .env.example .env      # впишите свой ANTHROPIC_API_KEY
+cp .env.example .env      # выберите поставщика модели и впишите ключ
 npm run dev               # http://localhost:5173
 ```
 
@@ -33,14 +34,17 @@ npm run dev               # http://localhost:5173
 
 | Переменная | Обяз. | По умолчанию | Описание |
 | --- | --- | --- | --- |
-| `ANTHROPIC_API_KEY` | да | — | Ключ Anthropic API. Только на сервере. |
-| `CLAUDE_MODEL` | нет | `claude-sonnet-4-6` | Модель для запросов. |
-| `PORT` | нет | `3000` | Порт для `npm start`. |
+| `LLM_PROVIDER` | нет | `anthropic` | `yandex` или `anthropic`. Скрипт деплоя в Яндекс Облако ставит `yandex`. |
+| `YANDEX_FOLDER_ID` | для `yandex` | — | каталог, из которого берётся модель |
+| `YANDEX_MODEL` | нет | `yandexgpt` | или `yandexgpt-lite`, или полный `gpt://...` |
+| `YANDEX_API_KEY` | нет | — | нужен только вне Яндекс Облака; внутри токен берётся у metadata-сервиса |
+| `ANTHROPIC_API_KEY` | для `anthropic` | — | ключ Claude API |
+| `CLAUDE_MODEL` | нет | `claude-sonnet-4-6` | модель Anthropic |
+| `ALLOWED_ORIGINS` | нет | пусто | домены для CORS, если фронтенд на другом домене |
+| `PORT` | нет | `3000` | порт для `npm start` |
 
-> **Не добавляйте к ключу префикс `VITE_`.** Всё с этим префиксом Vite вшивает
+> **Не добавляйте к ключам префикс `VITE_`.** Всё с этим префиксом Vite вшивает
 > в клиентский бандл, то есть ключ станет виден любому посетителю.
-
----
 
 ## Деплой
 
@@ -64,18 +68,20 @@ npm run dev               # http://localhost:5173
 ```bash
 yc init                                   # один раз
 
-ANTHROPIC_API_KEY=sk-ant-... \
-ALLOWED_ORIGINS=https://lirav.github.io \
-  ./deploy/yandex-cloud.sh
+ALLOWED_ORIGINS=https://lirav.github.io ./deploy/yandex-cloud.sh
 ```
+
+Никаких ключей передавать не нужно: по умолчанию используется **Yandex
+Foundation Models**, а контейнер авторизуется собственным сервисным аккаунтом
+через metadata-сервис. Скрипт сам выдаёт аккаунту роль `ai.languageModels.user`.
 
 `ALLOWED_ORIGINS` — домен, с которого браузер будет обращаться к API. Только
 схема и хост, **без пути и без слэша в конце**: origin у GitHub Pages это
 `https://lirav.github.io`, а не `https://lirav.github.io/chitaem-vmeste/`.
 
 Скрипт идемпотентный — повторный запуск выкатывает новую ревизию. Он создаёт
-реестр образов, сервисный аккаунт с ролями, секрет в Lockbox, собирает и пушит
-образ, деплоит ревизию и открывает публичный доступ. В конце печатает адрес:
+реестр образов, сервисный аккаунт с ролями, собирает и пушит образ, деплоит
+ревизию и открывает публичный доступ. В конце печатает адрес:
 
 ```
 https://<container_id>.containers.yandexcloud.net
@@ -83,11 +89,10 @@ https://<container_id>.containers.yandexcloud.net
 
 **Запишите его — он нужен на шаге 2.**
 
-Ключ хранится в **Lockbox** и подставляется переменной окружения: в образ он не
-попадает и в репозитории его нет.
-
 | Переменная | По умолчанию | |
 | --- | --- | --- |
+| `LLM_PROVIDER` | `yandex` | `yandex` или `anthropic` |
+| `YANDEX_MODEL` | `yandexgpt` | можно `yandexgpt-lite` или полный `gpt://...` |
 | `ALLOWED_ORIGINS` | пусто | домены для CORS |
 | `CONTAINER_NAME` | `chitaem-vmeste` | имя контейнера |
 | `MEMORY` | `256MB` | память ревизии |
@@ -132,10 +137,11 @@ yc iam key create --service-account-name gh-deployer --output key.json
 | | Имя | Значение |
 | --- | --- | --- |
 | Secret | `YC_SA_JSON_CREDENTIALS` | содержимое `key.json` |
-| Secret | `ANTHROPIC_API_KEY` | ключ Anthropic (нужен только при первом запуске — дальше он живёт в Lockbox, и секрет можно удалить) |
+| Secret | `ANTHROPIC_API_KEY` | **не нужен** при провайдере по умолчанию; только для `LLM_PROVIDER=anthropic` |
 | Variable | `YC_CLOUD_ID` | `yc config get cloud-id` |
 | Variable | `YC_FOLDER_ID` | `yc config get folder-id` |
 | Variable | `ALLOWED_ORIGINS` | `https://lirav.github.io` |
+| Variable | `LLM_PROVIDER` | необязательно; `yandex` по умолчанию |
 
 После этого бэкенд переезжает сам при каждом пуше в `main`, а адрес контейнера
 печатается в сводке запуска.
@@ -158,13 +164,35 @@ yc resource-manager folder create --name chitaem-vmeste
 
 `key.json` не коммитьте — он уже покрыт `.gitignore`, но проверьте.
 
-### Обновление ключа
+### Выбор модели
+
+По умолчанию — Yandex Foundation Models, модель `yandexgpt`. Сменить:
+
+```bash
+YANDEX_MODEL=yandexgpt-lite ./deploy/yandex-cloud.sh
+```
+
+**Про Anthropic.** Россия не входит в список поддерживаемых регионов Anthropic,
+поэтому из `ru-central1` их API недоступен. Если бэкенд когда-нибудь переедет
+туда, где Claude работает:
+
+```bash
+LLM_PROVIDER=anthropic ANTHROPIC_API_KEY=sk-ant-... ./deploy/yandex-cloud.sh
+```
+
+Тогда ключ ляжет в Lockbox, а обновляется он так:
 
 ```bash
 yc lockbox secret add-version --name chitaem-vmeste-anthropic \
   --payload "[{'key': 'ANTHROPIC_API_KEY', 'text_value': 'sk-ant-НОВЫЙ'}]"
-./deploy/yandex-cloud.sh
+LLM_PROVIDER=anthropic ./deploy/yandex-cloud.sh
 ```
+
+Оба поставщика возвращают ответ в одном формате — фронтенд не знает и не
+должен знать, кто именно ответил. Разница одна: у Anthropic есть серверный
+веб-поиск, которым пользуется поиск описания книги; Yandex отвечает на этот
+запрос по собственным знаниям, поэтому для редких книг описание может быть
+менее точным.
 
 ### Диагностика
 
@@ -227,7 +255,8 @@ index.html              каркас страницы
 src/main.tsx            точка входа React
 src/App.jsx             всё приложение
 src/storage.ts          хранилище на localStorage
-api/_claude.js          прокси к Anthropic API (общая логика)
+api/_llm.js             прокси: валидация, CORS, выбор поставщика
+api/providers/          yandex.js и anthropic.js
 deploy/yandex-cloud.sh  деплой бэкенда в Яндекс Облако
 .github/workflows/     CI и публикация фронтенда на Pages
 api/claude.js           адаптер для Vercel

@@ -129,7 +129,7 @@ ${companion.prompt}
 - Никаких заголовков. Вопрос — только когда он напрашивается.`;
 }
 
-// The model and the API key live on the server (see api/_claude.js); the
+// The model and the API key live on the server (see api/_llm.js); the
 // browser never holds them.
 //
 // Same-origin deploy (one container serves UI + API): leave VITE_API_URL unset

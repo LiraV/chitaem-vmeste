@@ -7,13 +7,15 @@ name: Deploy backend to Yandex Cloud
 #
 #   Secrets
 #     YC_SA_JSON_CREDENTIALS  authorized key JSON of the DEPLOY service account
-#     ANTHROPIC_API_KEY       only read on the first run, to create the
-#                             Lockbox secret; afterwards the key lives in
-#                             Lockbox and this can be removed
+#     ANTHROPIC_API_KEY       only for LLM_PROVIDER=anthropic, and only on the
+#                             first run; afterwards the key lives in Lockbox.
+#                             The default Yandex provider needs no key at all.
 #   Variables
 #     YC_CLOUD_ID             yc config get cloud-id
 #     YC_FOLDER_ID            yc config get folder-id
 #     ALLOWED_ORIGINS         e.g. https://lirav.github.io
+#     LLM_PROVIDER            optional; "yandex" (default) or "anthropic"
+#     YANDEX_MODEL            optional; defaults to yandexgpt
 #
 # Creating the deploy service account (once, locally):
 #   yc iam service-account create --name gh-deployer
@@ -91,10 +93,17 @@ jobs:
 
       - name: Deploy
         env:
+          LLM_PROVIDER: ${{ vars.LLM_PROVIDER }}
+          YANDEX_MODEL: ${{ vars.YANDEX_MODEL }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           ALLOWED_ORIGINS: ${{ vars.ALLOWED_ORIGINS }}
           IMAGE_TAG: ${{ github.sha }}
-        run: ./deploy/yandex-cloud.sh
+        run: |
+          # An unset repository variable arrives as an empty string, which would
+          # override the script's own default. Drop it so the default applies.
+          [ -n "${LLM_PROVIDER:-}" ] || unset LLM_PROVIDER
+          [ -n "${YANDEX_MODEL:-}" ] || unset YANDEX_MODEL
+          ./deploy/yandex-cloud.sh
 
       - name: Remove credentials
         if: always()

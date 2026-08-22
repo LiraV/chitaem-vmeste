@@ -8,7 +8,7 @@ import { createServer } from "node:http";
 import { readFile, stat } from "node:fs/promises";
 import { extname, join, normalize, resolve, sep, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { handleClaudeRequest, corsHeaders } from "./api/_claude.js";
+import { handleClaudeRequest, corsHeaders } from "./api/_llm.js";
 
 const PORT = Number(process.env.PORT) || 3000;
 const DIST = resolve(dirname(fileURLToPath(import.meta.url)), "dist");

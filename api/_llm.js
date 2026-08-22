@@ -1,27 +1,27 @@
 /**
- * Framework-agnostic Anthropic proxy.
+ * Framework-agnostic LLM proxy.
  *
- * The browser must never hold the API key, and api.anthropic.com does not
+ * The browser must never hold a provider key, and api.anthropic.com does not
  * allow direct browser calls anyway. The client posts a trimmed request here
- * and this module adds the credentials server-side.
+ * and this module adds the credentials server-side, then dispatches to the
+ * provider named by LLM_PROVIDER.
+ *
+ * Providers return the same Anthropic-style content-block shape, so the
+ * frontend does not change when the backend switches provider.
  *
  * Adapters: api/claude.js (Vercel), netlify/functions/claude.js (Netlify),
  * server.js (standalone Node), and the dev middleware in vite.config.js.
  */
 
-const ANTHROPIC_URL = "https://api.anthropic.com/v1/messages";
-const ANTHROPIC_VERSION = "2023-06-01";
+import * as anthropic from "./providers/anthropic.js";
+import * as yandex from "./providers/yandex.js";
 
-const DEFAULT_MODEL = "claude-sonnet-4-6";
+const PROVIDERS = { anthropic, yandex };
+const DEFAULT_PROVIDER = "anthropic";
+
 const MAX_TOKENS_CAP = 4000;
 const MAX_MESSAGES = 80;
 const MAX_CHARS = 400_000;
-
-/** Tools the client may ask for, by name. The definition is built here so a
- *  caller cannot smuggle in an arbitrary server-side tool. */
-const ALLOWED_TOOLS = {
-  web_search: { type: "web_search_20250305", name: "web_search" },
-};
 
 class BadRequest extends Error {
   constructor(message) {
@@ -30,7 +30,8 @@ class BadRequest extends Error {
   }
 }
 
-function buildPayload(input) {
+/** Validate and normalise the client request into a provider-neutral shape. */
+function buildRequest(input) {
   if (!input || typeof input !== "object") {
     throw new BadRequest("Body must be a JSON object");
   }
@@ -61,48 +62,45 @@ function buildPayload(input) {
     throw new BadRequest("Request too large");
   }
 
-  const payload = {
-    model: process.env.CLAUDE_MODEL || DEFAULT_MODEL,
-    max_tokens: Math.min(
+  let toolNames = [];
+  if (tools !== undefined) {
+    if (!Array.isArray(tools)) throw new BadRequest("`tools` must be an array");
+    toolNames = tools.map((t) => {
+      const name = t && t.name;
+      if (typeof name !== "string" || !name) throw new BadRequest("Each tool needs a name");
+      return name;
+    });
+  }
+
+  return {
+    system: typeof system === "string" && system.trim() ? system : undefined,
+    messages: cleanMessages,
+    maxTokens: Math.min(
       Math.max(Number.isFinite(maxTokens) ? Math.trunc(maxTokens) : 1000, 1),
       MAX_TOKENS_CAP
     ),
-    messages: cleanMessages,
+    toolNames,
   };
-
-  if (typeof system === "string" && system.trim()) payload.system = system;
-
-  if (tools !== undefined) {
-    if (!Array.isArray(tools)) throw new BadRequest("`tools` must be an array");
-    const resolved = tools.map((t) => {
-      const def = ALLOWED_TOOLS[t && t.name];
-      if (!def) throw new BadRequest(`Unsupported tool: ${t && t.name}`);
-      return def;
-    });
-    if (resolved.length) payload.tools = resolved;
-  }
-
-  return payload;
 }
 
 /**
  * @param {unknown} input Parsed JSON request body from the client.
- * @returns {Promise<{status: number, body: object}>} Status and JSON body to
- *          return to the client. Never throws.
+ * @returns {Promise<{status: number, body: object}>} Never throws.
  */
 export async function handleClaudeRequest(input) {
-  const apiKey = process.env.ANTHROPIC_API_KEY;
-  if (!apiKey) {
-    console.error("ANTHROPIC_API_KEY is not set — cannot reach the Anthropic API.");
+  const name = (process.env.LLM_PROVIDER || DEFAULT_PROVIDER).toLowerCase();
+  const provider = PROVIDERS[name];
+  if (!provider) {
+    console.error(`Unknown LLM_PROVIDER "${name}". Known: ${Object.keys(PROVIDERS).join(", ")}`);
     return {
       status: 500,
-      body: { error: { type: "configuration_error", message: "Server is missing ANTHROPIC_API_KEY" } },
+      body: { error: { type: "configuration_error", message: `Unknown LLM_PROVIDER "${name}"` } },
     };
   }
 
-  let payload;
+  let request;
   try {
-    payload = buildPayload(input);
+    request = buildRequest(input);
   } catch (e) {
     if (e instanceof BadRequest) {
       return { status: 400, body: { error: { type: "invalid_request_error", message: e.message } } };
@@ -110,43 +108,10 @@ export async function handleClaudeRequest(input) {
     throw e;
   }
 
-  let upstream;
-  try {
-    upstream = await fetch(ANTHROPIC_URL, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        "x-api-key": apiKey,
-        "anthropic-version": ANTHROPIC_VERSION,
-      },
-      body: JSON.stringify(payload),
-    });
-  } catch (e) {
-    console.error("Upstream request to Anthropic failed:", e);
-    return {
-      status: 502,
-      body: { error: { type: "upstream_error", message: "Could not reach the Anthropic API" } },
-    };
-  }
-
-  const text = await upstream.text();
-  let body;
-  try {
-    body = JSON.parse(text);
-  } catch {
-    console.error("Non-JSON response from Anthropic:", upstream.status, text.slice(0, 500));
-    return {
-      status: 502,
-      body: { error: { type: "upstream_error", message: "Malformed response from the Anthropic API" } },
-    };
-  }
-
-  if (!upstream.ok) {
-    // Log server-side; the client only ever sees the shape it already handles.
-    console.error("Anthropic API error:", upstream.status, JSON.stringify(body).slice(0, 500));
-  }
-
-  return { status: upstream.status, body };
+  // The Anthropic provider validates tool names against its own allowlist.
+  // Yandex has no server-side tools, so it ignores them and answers from the
+  // model's own knowledge — the book lookup prompt already handles a miss.
+  return provider.complete(request);
 }
 
 /**
