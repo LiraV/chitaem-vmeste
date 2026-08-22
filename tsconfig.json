@@ -1,0 +1,23 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "jsx": "react-jsx",
+    "types": ["vite/client"],
+
+    "allowJs": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "noEmit": true,
+
+    /* src/App.jsx is the original Artifact: plain JSX with no type
+       annotations, so it is compiled but not type-checked (checkJs is off).
+       Everything written for this project is type-checked strictly. */
+    "strict": true
+  },
+  "include": ["src", "vite.config.js"]
+}

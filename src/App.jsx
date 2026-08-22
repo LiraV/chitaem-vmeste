@@ -129,15 +129,24 @@ ${companion.prompt}
 - Никаких заголовков. Вопрос — только когда он напрашивается.`;
 }
 
+// The model and the API key live on the server (see api/_claude.js); the
+// browser only ever talks to our own /api/claude endpoint.
+const API_ENDPOINT = "/api/claude";
+
 async function apiCall(body) {
-  const response = await fetch("https://api.anthropic.com/v1/messages", {
+  const response = await fetch(API_ENDPOINT, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ model: "claude-sonnet-4-6", max_tokens: 1000, ...body }),
+    body: JSON.stringify({ max_tokens: 1000, ...body }),
   });
   const data = await response.json();
-  if (!data.content) throw new Error("empty");
+  if (!data.content) throw new Error(errorMessage(data, response.status));
   return data.content.map((b) => (b.type === "text" ? b.text : "")).filter(Boolean).join("\n").trim();
+}
+
+function errorMessage(data, status) {
+  const detail = data && data.error && data.error.message;
+  return detail ? `${status}: ${detail}` : `request failed (${status})`;
 }
 
 async function askClaude(history, chat, companion, lang, kids) {
@@ -151,13 +160,13 @@ async function askClaude(history, chat, companion, lang, kids) {
 }
 
 async function searchBookInfo(title, lang) {
-  const response = await fetch("https://api.anthropic.com/v1/messages", {
+  const response = await fetch(API_ENDPOINT, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
-      model: "claude-sonnet-4-6", max_tokens: 1000,
+      max_tokens: 1000,
       messages: [{ role: "user", content: `Найди в интернете, о чём книга «${title}». Верни ТОЛЬКО краткое описание сюжета и сеттинга в 3–6 предложениях, без спойлеров ключевых поворотов, на ${LANG_NAME[lang] || LANG_NAME.ru}. Если книга не находится — верни ровно строку NOT_FOUND.` }],
-      tools: [{ type: "web_search_20250305", name: "web_search" }],
+      tools: [{ name: "web_search" }],
     }),
   });
   const data = await response.json();
