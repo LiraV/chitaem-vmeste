@@ -22,6 +22,9 @@ concurrency:
 
 jobs:
   build:
+    # Skipped (grey, not red) until API_URL is set. Publishing without it would
+    # put up a UI whose every model request 404s.
+    if: ${{ vars.API_URL != '' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -67,6 +70,7 @@ jobs:
 
   deploy:
     needs: build
+    if: ${{ vars.API_URL != '' }}
     runs-on: ubuntu-latest
     environment:
       name: github-pages

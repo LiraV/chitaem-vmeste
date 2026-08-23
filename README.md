@@ -5,8 +5,8 @@
 карта героев, викторины и дебаты.
 
 React + Vite. Запросы к модели идут через собственный серверный эндпоинт —
-ключ никогда не попадает в браузер. Поддерживаются два поставщика модели:
-**Yandex Foundation Models** (по умолчанию) и **Anthropic Claude**.
+ключ никогда не попадает в браузер. Поддерживаются три поставщика:
+**OpenAI**, **Anthropic Claude** и **Yandex Foundation Models**.
 
 ---
 
@@ -14,7 +14,7 @@ React + Vite. Запросы к модели идут через собстве�
 
 ```bash
 npm install
-cp .env.example .env      # выберите поставщика модели и впишите ключ
+cp .env.example .env      # впишите OPENAI_API_KEY
 npm run dev               # http://localhost:5173
 ```
 
@@ -34,69 +34,74 @@ npm run dev               # http://localhost:5173
 
 | Переменная | Обяз. | По умолчанию | Описание |
 | --- | --- | --- | --- |
-| `LLM_PROVIDER` | нет | `anthropic` | `anthropic` или `yandex` |
-| `YANDEX_FOLDER_ID` | для `yandex` | — | каталог, из которого берётся модель |
-| `YANDEX_MODEL` | нет | `yandexgpt` | или `yandexgpt-lite`, или полный `gpt://...` |
-| `YANDEX_API_KEY` | нет | — | нужен только вне Яндекс Облака; внутри токен берётся у metadata-сервиса |
+| `LLM_PROVIDER` | нет | по наличию ключа | `openai`, `anthropic` или `yandex` |
+| `OPENAI_API_KEY` | для `openai` | — | ключ OpenAI |
+| `OPENAI_MODEL` | нет | `gpt-5.5` | любая доступная модель |
+| `OPENAI_TEMPERATURE` | нет | не отправляется | reasoning-модели его отвергают — задавайте только осознанно |
 | `ANTHROPIC_API_KEY` | для `anthropic` | — | ключ Claude API |
 | `CLAUDE_MODEL` | нет | `claude-sonnet-4-6` | модель Anthropic |
+| `YANDEX_FOLDER_ID` | для `yandex` | — | каталог, из которого берётся модель |
+| `YANDEX_MODEL` | нет | `yandexgpt` | или полный `gpt://...` |
 | `ALLOWED_ORIGINS` | нет | пусто | домены для CORS, если фронтенд на другом домене |
 | `PORT` | нет | `3000` | порт для `npm start` |
+
+Провайдер можно не указывать: если `LLM_PROVIDER` пуст, выбирается тот, чей
+ключ присутствует. То есть достаточно задать один `OPENAI_API_KEY`.
 
 > **Не добавляйте к ключам префикс `VITE_`.** Всё с этим префиксом Vite вшивает
 > в клиентский бандл, то есть ключ станет виден любому посетителю.
 
 ## Деплой
 
-Нужен хостинг, который выполняет серверный код: ключ API нельзя отдать браузеру,
-поэтому чисто статический хостинг (GitHub Pages, Object Storage) не подойдёт —
-интерфейс откроется, но собеседник отвечать не будет.
+Нужен хостинг, который выполняет серверный код: ключ API нельзя отдать
+браузеру, поэтому чисто статический хостинг (GitHub Pages, Object Storage) не
+подойдёт — интерфейс откроется, но собеседник отвечать не будет.
 
-**Россия не входит в список поддерживаемых регионов Anthropic.** Если бэкенд
-должен стоять внутри России, Claude API оттуда недоступен — переключайтесь на
-`LLM_PROVIDER=yandex` (см. «Выбор модели»).
+### Vercel — рекомендуемый путь
 
-### Всё на Vercel — самый короткий путь
-
-Интерфейс и `/api/claude` оказываются на одном домене: не нужен ни CORS, ни
+Интерфейс и `/api/claude` оказываются на одном домене: не нужны ни CORS, ни
 отдельный адрес бэкенда, ни настройки GitHub Pages.
 
-1. [vercel.com/new](https://vercel.com/new) → войти через GitHub → импортировать
-   `chitaem-vmeste`. Конфиг `vercel.json` уже в репозитории, настраивать сборку
-   не нужно.
-2. В **Environment Variables** добавить `ANTHROPIC_API_KEY` со значением ключа.
-3. **Deploy.**
+```bash
+npm i -g vercel
+vercel login
+vercel link                       # выбрать/создать проект
+vercel env add OPENAI_API_KEY     # вставить ключ, выбрать Production
+vercel --prod
+```
+
+Либо то же через веб: [vercel.com/new](https://vercel.com/new) → импортировать
+репозиторий → Environment Variables → `OPENAI_API_KEY` → Deploy. Сборку
+настраивать не нужно, `vercel.json` уже в репозитории.
+
+Ключ берётся на [platform.openai.com/api-keys](https://platform.openai.com/api-keys),
+баланс пополняется в разделе Billing. Подписка ChatGPT Plus доступа к API не
+даёт — это отдельный счёт.
 
 Дальше каждый пуш в `main` выкатывается сам.
 
-Ключ берётся на [platform.claude.com/settings/keys](https://platform.claude.com/settings/keys),
-баланс пополняется на [platform.claude.com/settings/billing](https://platform.claude.com/settings/billing).
-Подписка claude.ai доступа к API не даёт — это отдельный счёт.
-
 ### Интерфейс на GitHub Pages, бэкенд отдельно
 
-Если хочется адрес `lirav.github.io/chitaem-vmeste`, бэкенд всё равно нужен
-где-то ещё (Vercel по инструкции выше, без второго шага он бесполезен).
-
-Два разовых действия в репозитории:
+Нужно только если принципиален адрес `lirav.github.io/chitaem-vmeste`. Бэкенд
+всё равно должен где-то жить — разверните его по инструкции выше.
 
 1. **Settings → Pages → Source: GitHub Actions.**
-   Пока там стоит «Deploy from a branch», GitHub публикует исходники репозитория
-   без сборки, и страница будет пустой — что бы ни лежало в `main`.
+   Пока там «Deploy from a branch», GitHub публикует исходники репозитория без
+   сборки, и страница будет пустой — что бы ни лежало в `main`.
 2. **Settings → Secrets and variables → Actions → Variables** → переменная
-   `API_URL` со значением адреса бэкенда, например `https://chitaem-vmeste.vercel.app`.
+   `API_URL` со значением адреса бэкенда, например
+   `https://chitaem-vmeste.vercel.app`.
+3. На бэкенде выставить `ALLOWED_ORIGINS=https://lirav.github.io`, иначе
+   браузер заблокирует запросы по CORS.
 
-Затем на бэкенде выставить `ALLOWED_ORIGINS=https://lirav.github.io` — иначе
-браузер заблокирует запросы по CORS.
-
-Без `API_URL` workflow намеренно падает: иначе он выложил бы интерфейс, у
-которого молчит собеседник.
+Без `API_URL` workflow пропускается: иначе он выложил бы интерфейс, у которого
+молчит собеседник.
 
 ### Netlify
 
 ```bash
 npm i -g netlify-cli
-netlify env:set ANTHROPIC_API_KEY sk-ant-...
+netlify env:set OPENAI_API_KEY sk-...
 netlify deploy --prod
 ```
 
@@ -104,35 +109,35 @@ netlify deploy --prod
 
 ```bash
 docker build -t chitaem-vmeste .
-docker run -p 3000:3000 -e ANTHROPIC_API_KEY=sk-ant-... chitaem-vmeste
+docker run -p 3000:3000 -e OPENAI_API_KEY=sk-... chitaem-vmeste
 ```
 
 Без Docker: `npm ci && npm run build && npm start`.
 
 ### Яндекс Облако
 
-`deploy/yandex-cloud.sh` разворачивает бэкенд в Serverless Containers. Работает,
-но помните про регион: с `LLM_PROVIDER=anthropic` (по умолчанию) запросы к
-Claude API из `ru-central1` не пройдут. Для российского хостинга:
+`deploy/yandex-cloud.sh` разворачивает бэкенд в Serverless Containers. Учтите
+регион: ни OpenAI, ни Anthropic не обслуживают Россию, поэтому из `ru-central1`
+работает только `LLM_PROVIDER=yandex`:
 
 ```bash
 LLM_PROVIDER=yandex ALLOWED_ORIGINS=https://lirav.github.io ./deploy/yandex-cloud.sh
 ```
 
-Workflow `.github/workflows/deploy-backend.yml` делает то же самое из Actions —
-он запускается только вручную, с вкладки Actions.
-
 ### Выбор модели
 
-| `LLM_PROVIDER` | Что нужно | Где работает |
+| `LLM_PROVIDER` | Что нужно | Примечание |
 | --- | --- | --- |
-| `anthropic` (по умолчанию) | `ANTHROPIC_API_KEY` | везде, кроме неподдерживаемых регионов |
-| `yandex` | ничего внутри Яндекс Облака — контейнер авторизуется своим сервисным аккаунтом | в том числе из России |
+| `openai` | `OPENAI_API_KEY` | по умолчанию `gpt-5.5` |
+| `anthropic` | `ANTHROPIC_API_KEY` | по умолчанию `claude-sonnet-4-6` |
+| `yandex` | внутри Яндекс Облака — ничего | единственный, работающий из России |
 
-Оба возвращают ответ в одном формате, фронтенд их не различает. Разница одна:
-у Anthropic есть серверный веб-поиск, которым пользуется автопоиск описания
-книги; Yandex отвечает на этот запрос по собственным знаниям, поэтому для
-редких книг описание может быть менее точным.
+Все три возвращают ответ в одном формате, фронтенд их не различает.
+
+Одно отличие: у Anthropic есть серверный веб-поиск, которым пользуется
+автопоиск описания книги. У OpenAI и Yandex в этой сборке его нет — они
+отвечают по собственным знаниям модели, поэтому для редких книг описание может
+быть менее точным или не найтись вовсе. Вписать его вручную можно всегда.
 
 ## Структура
 
@@ -142,7 +147,7 @@ src/main.tsx            точка входа React
 src/App.jsx             всё приложение
 src/storage.ts          хранилище на localStorage
 api/_llm.js             прокси: валидация, CORS, выбор поставщика
-api/_providers/         yandex.js и anthropic.js
+api/_providers/         openai.js, anthropic.js, yandex.js
 deploy/yandex-cloud.sh  деплой бэкенда в Яндекс Облако
 .github/workflows/     CI и публикация фронтенда на Pages
 api/claude.js           адаптер для Vercel

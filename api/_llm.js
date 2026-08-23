@@ -1,10 +1,10 @@
 /**
  * Framework-agnostic LLM proxy.
  *
- * The browser must never hold a provider key, and api.anthropic.com does not
- * allow direct browser calls anyway. The client posts a trimmed request here
- * and this module adds the credentials server-side, then dispatches to the
- * provider named by LLM_PROVIDER.
+ * The browser must never hold a provider key, and the model APIs do not allow
+ * direct browser calls anyway. The client posts a trimmed request here and
+ * this module adds the credentials server-side, then dispatches to the
+ * selected provider (see selectedProvider).
  *
  * Providers return the same Anthropic-style content-block shape, so the
  * frontend does not change when the backend switches provider.
@@ -14,10 +14,24 @@
  */
 
 import * as anthropic from "./_providers/anthropic.js";
+import * as openai from "./_providers/openai.js";
 import * as yandex from "./_providers/yandex.js";
 
-const PROVIDERS = { anthropic, yandex };
-const DEFAULT_PROVIDER = "anthropic";
+const PROVIDERS = { anthropic, openai, yandex };
+
+/**
+ * Which provider to use. An explicit LLM_PROVIDER always wins; otherwise the
+ * key that is actually present decides, so a deploy needs one variable rather
+ * than two that can disagree.
+ */
+function selectedProvider() {
+  const explicit = (process.env.LLM_PROVIDER || "").trim().toLowerCase();
+  if (explicit) return explicit;
+  if (process.env.OPENAI_API_KEY) return "openai";
+  if (process.env.ANTHROPIC_API_KEY) return "anthropic";
+  if (process.env.YANDEX_API_KEY || process.env.YANDEX_FOLDER_ID) return "yandex";
+  return "openai";
+}
 
 const MAX_TOKENS_CAP = 4000;
 const MAX_MESSAGES = 80;
@@ -88,7 +102,7 @@ function buildRequest(input) {
  * @returns {Promise<{status: number, body: object}>} Never throws.
  */
 export async function handleClaudeRequest(input) {
-  const name = (process.env.LLM_PROVIDER || DEFAULT_PROVIDER).toLowerCase();
+  const name = selectedProvider();
   const provider = PROVIDERS[name];
   if (!provider) {
     console.error(`Unknown LLM_PROVIDER "${name}". Known: ${Object.keys(PROVIDERS).join(", ")}`);
@@ -109,8 +123,9 @@ export async function handleClaudeRequest(input) {
   }
 
   // The Anthropic provider validates tool names against its own allowlist.
-  // Yandex has no server-side tools, so it ignores them and answers from the
-  // model's own knowledge — the book lookup prompt already handles a miss.
+  // OpenAI and Yandex have no server-side tools here, so they ignore them and
+  // answer from the model's own knowledge — the book lookup prompt already
+  // handles a miss via its NOT_FOUND contract.
   return provider.complete(request);
 }
 
