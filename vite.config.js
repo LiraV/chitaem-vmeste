@@ -15,6 +15,20 @@ function claudeApiDevServer(env) {
         if (env[key] && !process.env[key]) process.env[key] = env[key];
       }
 
+      server.middlewares.use("/api/auth", async (req, res) => {
+        const url = new URL(req.url, "http://localhost");
+        const action = url.pathname.replace(/^\//, "");
+        const { routeAuth } = await import("./api/_auth-router.js");
+        const { status, headers, body } = await routeAuth(action, url.searchParams, req.headers.cookie);
+        for (const [k, v] of Object.entries(headers || {})) res.setHeader(k, v);
+        res.statusCode = status;
+        if (body) {
+          res.setHeader("content-type", "application/json; charset=utf-8");
+          return res.end(JSON.stringify(body));
+        }
+        res.end();
+      });
+
       server.middlewares.use("/api/claude", async (req, res) => {
         const json = (status, body) => {
           res.statusCode = status;

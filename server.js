@@ -9,6 +9,7 @@ import { readFile, stat } from "node:fs/promises";
 import { extname, join, normalize, resolve, sep, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { handleClaudeRequest, corsHeaders } from "./api/_llm.js";
+import { routeAuth } from "./api/_auth-router.js";
 
 const PORT = Number(process.env.PORT) || 3000;
 const DIST = resolve(dirname(fileURLToPath(import.meta.url)), "dist");
@@ -87,6 +88,14 @@ async function serveStatic(res, pathname) {
 
 const server = createServer(async (req, res) => {
   const { pathname } = new URL(req.url, "http://localhost");
+
+  if (pathname.startsWith("/api/auth/")) {
+    const action = pathname.slice("/api/auth/".length);
+    const { status, headers, body } = await routeAuth(action, new URL(req.url, "http://localhost").searchParams, req.headers.cookie);
+    if (body) return sendJson(res, status, body, headers || {});
+    res.writeHead(status, headers || {});
+    return res.end();
+  }
 
   if (pathname === "/api/claude") {
     const cors = corsHeaders(req.headers.origin);
