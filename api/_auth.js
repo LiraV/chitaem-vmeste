@@ -6,7 +6,7 @@
  * нужен один раз, чтобы узнать, кто пришёл. Дальше пользователь ходит с нашей
  * собственной подписанной сессией в httpOnly-куке.
  */
-import { sign, verify, nonce } from "./_session.js";
+import { sign, verify, nonce, hasUsableSecret, MIN_SECRET_LENGTH } from "./_session.js";
 
 const AUTHORIZE_URL = "https://oauth.yandex.ru/authorize";
 const TOKEN_URL = process.env.YANDEX_TOKEN_URL || "https://oauth.yandex.ru/token";
@@ -17,8 +17,21 @@ const STATE_COOKIE = "cv_oauth_state";
 const SESSION_TTL = 60 * 60 * 24 * 30;  // 30 дней
 const STATE_TTL = 60 * 10;              // код Яндекса живёт 10 минут
 
+// Длина секрета — часть настроенности, а не отдельный сюрприз при первой
+// подписи: иначе приложение показывает кнопку входа, которая гарантированно
+// падает.
 export const isAuthConfigured = () =>
-  Boolean(process.env.YANDEX_CLIENT_ID && process.env.YANDEX_CLIENT_SECRET && process.env.SESSION_SECRET);
+  Boolean(process.env.YANDEX_CLIENT_ID && process.env.YANDEX_CLIENT_SECRET && process.env.APP_URL) && hasUsableSecret();
+
+/** Что именно не настроено — чтобы владелец сайта увидел причину, а не 500. */
+function configProblem() {
+  if (!process.env.YANDEX_CLIENT_ID) return "не задан YANDEX_CLIENT_ID";
+  if (!process.env.YANDEX_CLIENT_SECRET) return "не задан YANDEX_CLIENT_SECRET";
+  if (!process.env.SESSION_SECRET) return "не задан SESSION_SECRET";
+  if (!hasUsableSecret()) return `SESSION_SECRET короче ${MIN_SECRET_LENGTH} символов`;
+  if (!appUrl()) return "не задан APP_URL";
+  return "неизвестная причина";
+}
 
 /** Разбор заголовка Cookie в объект. */
 export function parseCookies(header) {
@@ -50,7 +63,7 @@ const redirectUri = () => `${appUrl()}/api/auth/callback`;
 /** Шаг 1: уводим пользователя на страницу согласия Яндекса. */
 export function start() {
   if (!isAuthConfigured()) {
-    return { status: 500, body: { error: { type: "configuration_error", message: "Вход не настроен на сервере" } } };
+    return { status: 500, body: { error: { type: "configuration_error", message: `Вход не настроен: ${configProblem()}` } } };
   }
   const n = nonce();
   const state = sign({ n }, STATE_TTL);
@@ -68,7 +81,7 @@ export function start() {
 /** Шаг 2: Яндекс вернул код — меняем его на токен и заводим свою сессию. */
 export async function callback(query, cookies) {
   if (!isAuthConfigured()) {
-    return { status: 500, body: { error: { type: "configuration_error", message: "Вход не настроен на сервере" } } };
+    return { status: 500, body: { error: { type: "configuration_error", message: `Вход не настроен: ${configProblem()}` } } };
   }
   if (query.error) {
     // Пользователь отказал в доступе — это не ошибка, просто возвращаем его назад.

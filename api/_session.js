@@ -9,12 +9,20 @@ import { createHmac, timingSafeEqual, randomBytes } from "node:crypto";
 
 const b64url = (buf) => Buffer.from(buf).toString("base64url");
 
-function secret() {
+/** Минимальная длина секрета подписи. Короткий подбирается перебором. */
+export const MIN_SECRET_LENGTH = 32;
+
+/** @returns {boolean} Годится ли текущий SESSION_SECRET для подписи. */
+export function hasUsableSecret() {
   const s = process.env.SESSION_SECRET;
-  if (!s || s.length < 32) {
-    throw new Error("SESSION_SECRET не задан или короче 32 символов");
+  return typeof s === "string" && s.length >= MIN_SECRET_LENGTH;
+}
+
+function secret() {
+  if (!hasUsableSecret()) {
+    throw new Error(`SESSION_SECRET не задан или короче ${MIN_SECRET_LENGTH} символов`);
   }
-  return s;
+  return process.env.SESSION_SECRET;
 }
 
 function signature(data) {
