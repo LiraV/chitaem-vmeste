@@ -13,8 +13,8 @@
  * server.js (standalone Node), and the dev middleware in vite.config.js.
  */
 
-import * as anthropic from "./providers/anthropic.js";
-import * as yandex from "./providers/yandex.js";
+import * as anthropic from "./_providers/anthropic.js";
+import * as yandex from "./_providers/yandex.js";
 
 const PROVIDERS = { anthropic, yandex };
 const DEFAULT_PROVIDER = "anthropic";

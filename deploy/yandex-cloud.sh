@@ -7,12 +7,12 @@
 # model credential ever reaches the browser.
 #
 # LLM_PROVIDER picks the model backend:
-#   yandex     (default) Yandex Foundation Models. Needs no key at all — the
-#              container authenticates as its own service account through the
-#              metadata service. Anthropic is not available from ru-central1,
-#              which is why this is the default here.
-#   anthropic  the Claude API, with the key held in Lockbox. Only useful if
-#              this container runs somewhere Anthropic serves.
+#   anthropic  (default) the Claude API, with the key held in Lockbox.
+#              Note Russia is not in Anthropic's supported regions, so this
+#              will not work from ru-central1 — host the backend elsewhere.
+#   yandex     Yandex Foundation Models. Needs no key at all: the container
+#              authenticates as its own service account through the metadata
+#              service. Use when the backend must stay inside Russia.
 #
 # Prerequisites:
 #   - yc CLI installed and initialised (`yc init`)
@@ -29,7 +29,7 @@ CONTAINER_NAME="${CONTAINER_NAME:-chitaem-vmeste}"
 REGISTRY_NAME="${REGISTRY_NAME:-chitaem-vmeste}"
 SA_NAME="${SA_NAME:-chitaem-vmeste-sa}"
 SECRET_NAME="${SECRET_NAME:-chitaem-vmeste-anthropic}"
-LLM_PROVIDER="${LLM_PROVIDER:-yandex}"
+LLM_PROVIDER="${LLM_PROVIDER:-anthropic}"
 # Empty means the provider's own default (yandexgpt).
 YANDEX_MODEL="${YANDEX_MODEL:-}"
 IMAGE_TAG="${IMAGE_TAG:-$(date +%Y%m%d-%H%M%S)}"

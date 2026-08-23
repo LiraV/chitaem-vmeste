@@ -29,20 +29,10 @@ name: Deploy backend to Yandex Cloud
 # those resources once by hand and drop the role to
 # container-registry.images.pusher + serverless-containers.admin.
 
+# Manual only. The project deploys its backend elsewhere at the moment, so
+# running this on every push would just produce a red X. Trigger it from the
+# Actions tab when you actually want a Yandex Cloud deploy.
 on:
-  push:
-    branches: [main]
-    paths:
-      - "api/**"
-      - "server.js"
-      - "Dockerfile"
-      - "package.json"
-      - "package-lock.json"
-      - "src/**"
-      - "index.html"
-      - "vite.config.js"
-      - "deploy/yandex-cloud.sh"
-      - ".github/workflows/deploy-backend.yml"
   workflow_dispatch:
 
 concurrency:

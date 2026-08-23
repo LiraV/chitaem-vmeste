@@ -34,7 +34,7 @@ npm run dev               # http://localhost:5173
 
 | Переменная | Обяз. | По умолчанию | Описание |
 | --- | --- | --- | --- |
-| `LLM_PROVIDER` | нет | `anthropic` | `yandex` или `anthropic`. Скрипт деплоя в Яндекс Облако ставит `yandex`. |
+| `LLM_PROVIDER` | нет | `anthropic` | `anthropic` или `yandex` |
 | `YANDEX_FOLDER_ID` | для `yandex` | — | каталог, из которого берётся модель |
 | `YANDEX_MODEL` | нет | `yandexgpt` | или `yandexgpt-lite`, или полный `gpt://...` |
 | `YANDEX_API_KEY` | нет | — | нужен только вне Яндекс Облака; внутри токен берётся у metadata-сервиса |
@@ -48,195 +48,59 @@ npm run dev               # http://localhost:5173
 
 ## Деплой
 
-Схема: **интерфейс на GitHub Pages, бэкенд в Яндекс Облаке.**
+Нужен хостинг, который выполняет серверный код: ключ API нельзя отдать браузеру,
+поэтому чисто статический хостинг (GitHub Pages, Object Storage) не подойдёт —
+интерфейс откроется, но собеседник отвечать не будет.
 
-```
-Браузер ──> lirav.github.io/chitaem-vmeste/   (статика, GitHub Pages)
-   │
-   └──────> <id>.containers.yandexcloud.net   (Node-сервер, Яндекс Облако)
-                     └──> api.anthropic.com   (ключ живёт только здесь)
-```
+**Россия не входит в список поддерживаемых регионов Anthropic.** Если бэкенд
+должен стоять внутри России, Claude API оттуда недоступен — переключайтесь на
+`LLM_PROVIDER=yandex` (см. «Выбор модели»).
 
-Ключ API нельзя класть в браузер, поэтому Pages в одиночку не справится — он
-только раздаёт статику. Запросы к модели уходят на отдельный бэкенд.
+### Всё на Vercel — самый короткий путь
 
-Порядок важен: **сначала бэкенд**, потом фронтенд — при сборке фронтенда нужно
-знать адрес бэкенда.
+Интерфейс и `/api/claude` оказываются на одном домене: не нужен ни CORS, ни
+отдельный адрес бэкенда, ни настройки GitHub Pages.
 
-### Шаг 1. Бэкенд в Яндекс Облако
+1. [vercel.com/new](https://vercel.com/new) → войти через GitHub → импортировать
+   `chitaem-vmeste`. Конфиг `vercel.json` уже в репозитории, настраивать сборку
+   не нужно.
+2. В **Environment Variables** добавить `ANTHROPIC_API_KEY` со значением ключа.
+3. **Deploy.**
 
-```bash
-yc init                                   # один раз
+Дальше каждый пуш в `main` выкатывается сам.
 
-ALLOWED_ORIGINS=https://lirav.github.io ./deploy/yandex-cloud.sh
-```
+Ключ берётся на [platform.claude.com/settings/keys](https://platform.claude.com/settings/keys),
+баланс пополняется на [platform.claude.com/settings/billing](https://platform.claude.com/settings/billing).
+Подписка claude.ai доступа к API не даёт — это отдельный счёт.
 
-Никаких ключей передавать не нужно: по умолчанию используется **Yandex
-Foundation Models**, а контейнер авторизуется собственным сервисным аккаунтом
-через metadata-сервис. Скрипт сам выдаёт аккаунту роль `ai.languageModels.user`.
+### Интерфейс на GitHub Pages, бэкенд отдельно
 
-`ALLOWED_ORIGINS` — домен, с которого браузер будет обращаться к API. Только
-схема и хост, **без пути и без слэша в конце**: origin у GitHub Pages это
-`https://lirav.github.io`, а не `https://lirav.github.io/chitaem-vmeste/`.
+Если хочется адрес `lirav.github.io/chitaem-vmeste`, бэкенд всё равно нужен
+где-то ещё (Vercel по инструкции выше, без второго шага он бесполезен).
 
-Скрипт идемпотентный — повторный запуск выкатывает новую ревизию. Он создаёт
-реестр образов, сервисный аккаунт с ролями, собирает и пушит образ, деплоит
-ревизию и открывает публичный доступ. В конце печатает адрес:
+Два разовых действия в репозитории:
 
-```
-https://<container_id>.containers.yandexcloud.net
-```
+1. **Settings → Pages → Source: GitHub Actions.**
+   Пока там стоит «Deploy from a branch», GitHub публикует исходники репозитория
+   без сборки, и страница будет пустой — что бы ни лежало в `main`.
+2. **Settings → Secrets and variables → Actions → Variables** → переменная
+   `API_URL` со значением адреса бэкенда, например `https://chitaem-vmeste.vercel.app`.
 
-**Запишите его — он нужен на шаге 2.**
+Затем на бэкенде выставить `ALLOWED_ORIGINS=https://lirav.github.io` — иначе
+браузер заблокирует запросы по CORS.
 
-| Переменная | По умолчанию | |
-| --- | --- | --- |
-| `LLM_PROVIDER` | `yandex` | `yandex` или `anthropic` |
-| `YANDEX_MODEL` | `yandexgpt` | можно `yandexgpt-lite` или полный `gpt://...` |
-| `ALLOWED_ORIGINS` | пусто | домены для CORS |
-| `CONTAINER_NAME` | `chitaem-vmeste` | имя контейнера |
-| `MEMORY` | `256MB` | память ревизии |
-| `CORES` | `1` | ядра |
-| `TIMEOUT` | `300s` | таймаут запроса (максимум у платформы — 10 мин) |
+Без `API_URL` workflow намеренно падает: иначе он выложил бы интерфейс, у
+которого молчит собеседник.
 
-### Шаг 2. Фронтенд на GitHub Pages
-
-Две настройки в репозитории, оба раза — один раз:
-
-1. **Settings → Pages → Source: GitHub Actions**
-   (если стоит «Deploy from a branch» — обязательно переключить, иначе Pages
-   выложит исходники без сборки и страница будет пустой)
-
-2. **Settings → Secrets and variables → Actions → Variables → New variable**
-   Имя `API_URL`, значение — адрес контейнера с шага 1.
-
-Дальше всё само: `.github/workflows/pages.yml` собирает фронтенд при каждом
-пуше в `main` и публикует. Запустить вручную — вкладка Actions → Deploy
-frontend to GitHub Pages → Run workflow.
-
-Если `API_URL` не задан, сборка падает с понятной ошибкой — намеренно: иначе
-интерфейс бы открылся, а собеседник молчал.
-
-### Автоматический деплой бэкенда
-
-Чтобы не запускать скрипт руками, деплой может делать GitHub Actions —
-`.github/workflows/deploy-backend.yml` запускает **тот же самый**
-`deploy/yandex-cloud.sh`, просто на раннере.
-
-Разовая настройка. Сначала локально создать сервисный аккаунт для деплоя:
-
-```bash
-yc iam service-account create --name gh-deployer
-yc resource-manager folder add-access-binding <folder-id> \
-  --role editor --subject serviceAccount:<gh-deployer-id>
-yc iam key create --service-account-name gh-deployer --output key.json
-```
-
-Затем в **Settings → Secrets and variables → Actions**:
-
-| | Имя | Значение |
-| --- | --- | --- |
-| Secret | `YC_SA_JSON_CREDENTIALS` | содержимое `key.json` |
-| Secret | `ANTHROPIC_API_KEY` | **не нужен** при провайдере по умолчанию; только для `LLM_PROVIDER=anthropic` |
-| Variable | `YC_CLOUD_ID` | `yc config get cloud-id` |
-| Variable | `YC_FOLDER_ID` | `yc config get folder-id` |
-| Variable | `ALLOWED_ORIGINS` | `https://lirav.github.io` |
-| Variable | `LLM_PROVIDER` | необязательно; `yandex` по умолчанию |
-
-После этого бэкенд переезжает сам при каждом пуше в `main`, а адрес контейнера
-печатается в сводке запуска.
-
-**Заведите под проект отдельную папку.** Роль `editor` нужна скрипту, чтобы
-создать реестр, сервисный аккаунт, секрет и контейнер при первом запуске — но
-она даёт полный доступ ко всему, что в папке лежит. Если в ней заодно живут
-база данных или DNS-зоны, утёкший ключ достанет и до них.
-
-```bash
-yc resource-manager folder create --name chitaem-vmeste
-```
-
-Дальше используйте `folder-id` именно этой папки — и в `YC_FOLDER_ID`, и при
-выдаче роли. Остальные ресурсы окажутся вне досягаемости ключа.
-
-Альтернатива, если папку заводить не хочется: создайте реестр, контейнер,
-секрет и рантайм-аккаунт один раз руками, а деплой-аккаунту выдайте только
-`container-registry.images.pusher` + `serverless-containers.admin`.
-
-`key.json` не коммитьте — он уже покрыт `.gitignore`, но проверьте.
-
-### Выбор модели
-
-По умолчанию — Yandex Foundation Models, модель `yandexgpt`. Сменить:
-
-```bash
-YANDEX_MODEL=yandexgpt-lite ./deploy/yandex-cloud.sh
-```
-
-**Про Anthropic.** Россия не входит в список поддерживаемых регионов Anthropic,
-поэтому из `ru-central1` их API недоступен. Если бэкенд когда-нибудь переедет
-туда, где Claude работает:
-
-```bash
-LLM_PROVIDER=anthropic ANTHROPIC_API_KEY=sk-ant-... ./deploy/yandex-cloud.sh
-```
-
-Тогда ключ ляжет в Lockbox, а обновляется он так:
-
-```bash
-yc lockbox secret add-version --name chitaem-vmeste-anthropic \
-  --payload "[{'key': 'ANTHROPIC_API_KEY', 'text_value': 'sk-ant-НОВЫЙ'}]"
-LLM_PROVIDER=anthropic ./deploy/yandex-cloud.sh
-```
-
-Оба поставщика возвращают ответ в одном формате — фронтенд не знает и не
-должен знать, кто именно ответил. Разница одна: у Anthropic есть серверный
-веб-поиск, которым пользуется поиск описания книги; Yandex отвечает на этот
-запрос по собственным знаниям, поэтому для редких книг описание может быть
-менее точным.
-
-### Диагностика
-
-```bash
-yc serverless container get --name chitaem-vmeste       # адрес и статус
-yc logging read --group-name default --follow           # логи бэкенда
-curl -X POST -H 'content-type: application/json' \
-  -d '{"messages":[{"role":"user","content":"привет"}]}' \
-  https://<container_id>.containers.yandexcloud.net/api/claude
-```
-
-Если интерфейс открывается, но собеседник молчит — почти всегда одно из двух:
-`API_URL` не задан (или задан с ошибкой), либо `ALLOWED_ORIGINS` на бэкенде не
-совпадает с доменом Pages. В консоли браузера это видно как ошибка CORS.
-
-### Всё на одной машине
-
-Бэкенд-контейнер раздаёт и собранный интерфейс тоже, так что Pages не
-обязателен — можно открыть адрес контейнера напрямую. Тогда `ALLOWED_ORIGINS`
-не нужен вовсе: origin один.
-
-<details>
-<summary>Vercel</summary>
-
-```bash
-npm i -g vercel
-vercel
-vercel env add ANTHROPIC_API_KEY
-vercel --prod
-```
-</details>
-
-<details>
-<summary>Netlify</summary>
+### Netlify
 
 ```bash
 npm i -g netlify-cli
 netlify env:set ANTHROPIC_API_KEY sk-ant-...
 netlify deploy --prod
 ```
-</details>
 
-<details>
-<summary>Docker где угодно (Render, Railway, Fly, VPS)</summary>
+### Docker где угодно (Render, Railway, Fly, VPS)
 
 ```bash
 docker build -t chitaem-vmeste .
@@ -244,9 +108,31 @@ docker run -p 3000:3000 -e ANTHROPIC_API_KEY=sk-ant-... chitaem-vmeste
 ```
 
 Без Docker: `npm ci && npm run build && npm start`.
-</details>
 
----
+### Яндекс Облако
+
+`deploy/yandex-cloud.sh` разворачивает бэкенд в Serverless Containers. Работает,
+но помните про регион: с `LLM_PROVIDER=anthropic` (по умолчанию) запросы к
+Claude API из `ru-central1` не пройдут. Для российского хостинга:
+
+```bash
+LLM_PROVIDER=yandex ALLOWED_ORIGINS=https://lirav.github.io ./deploy/yandex-cloud.sh
+```
+
+Workflow `.github/workflows/deploy-backend.yml` делает то же самое из Actions —
+он запускается только вручную, с вкладки Actions.
+
+### Выбор модели
+
+| `LLM_PROVIDER` | Что нужно | Где работает |
+| --- | --- | --- |
+| `anthropic` (по умолчанию) | `ANTHROPIC_API_KEY` | везде, кроме неподдерживаемых регионов |
+| `yandex` | ничего внутри Яндекс Облака — контейнер авторизуется своим сервисным аккаунтом | в том числе из России |
+
+Оба возвращают ответ в одном формате, фронтенд их не различает. Разница одна:
+у Anthropic есть серверный веб-поиск, которым пользуется автопоиск описания
+книги; Yandex отвечает на этот запрос по собственным знаниям, поэтому для
+редких книг описание может быть менее точным.
 
 ## Структура
 
@@ -256,7 +142,7 @@ src/main.tsx            точка входа React
 src/App.jsx             всё приложение
 src/storage.ts          хранилище на localStorage
 api/_llm.js             прокси: валидация, CORS, выбор поставщика
-api/providers/          yandex.js и anthropic.js
+api/_providers/         yandex.js и anthropic.js
 deploy/yandex-cloud.sh  деплой бэкенда в Яндекс Облако
 .github/workflows/     CI и публикация фронтенда на Pages
 api/claude.js           адаптер для Vercel
