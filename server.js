@@ -86,7 +86,17 @@ async function serveStatic(res, pathname) {
   }
 }
 
-const server = createServer(async (req, res) => {
+// Обёртка: непойманная ошибка в обработке одного запроса не должна уносить
+// весь процесс — остальные читатели не виноваты.
+const server = createServer((req, res) => {
+  handle(req, res).catch((e) => {
+    console.error("Необработанная ошибка запроса:", e);
+    if (!res.headersSent) sendJson(res, 500, { error: { type: "server_error", message: "Внутренняя ошибка" } });
+    else res.end();
+  });
+});
+
+async function handle(req, res) {
   const { pathname } = new URL(req.url, "http://localhost");
 
   if (pathname.startsWith("/api/auth/")) {
@@ -123,7 +133,7 @@ const server = createServer(async (req, res) => {
     return sendJson(res, 405, { error: { type: "method_not_allowed", message: "Use GET" } });
   }
   return serveStatic(res, pathname);
-});
+}
 
 // Bind all interfaces: container runtimes (Yandex Serverless Containers,
 // Docker) route external traffic to the container IP, not to loopback.

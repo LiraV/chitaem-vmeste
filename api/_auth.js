@@ -131,6 +131,9 @@ export async function callback(query, cookies) {
 
 /** Кто сейчас вошёл. Фронтенд спрашивает это при загрузке. */
 export function me(cookies) {
+  // Раньше проверки подписи: без SESSION_SECRET verify бросает исключение, а
+  // это штатное состояние сервера, на котором вход ещё не настроен.
+  if (!isAuthConfigured()) return { status: 200, body: { user: null, configured: false } };
   const payload = verify(cookies[SESSION_COOKIE]);
   if (!payload) return { status: 200, body: { user: null, configured: isAuthConfigured() } };
   return { status: 200, body: { user: { id: payload.sub, name: payload.name, email: payload.email }, configured: true } };
@@ -142,5 +145,6 @@ export function logout() {
 
 /** Сессия из заголовка Cookie — для защиты остальных эндпоинтов. */
 export function sessionFrom(cookieHeader) {
+  if (!isAuthConfigured()) return null;
   return verify(parseCookies(cookieHeader)[SESSION_COOKIE]);
 }

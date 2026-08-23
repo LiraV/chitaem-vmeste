@@ -13,12 +13,18 @@ import { start, callback, me, logout, parseCookies } from "./_auth.js";
 export async function routeAuth(action, query, cookieHeader) {
   const q = query instanceof URLSearchParams ? Object.fromEntries(query) : (query || {});
   const cookies = parseCookies(cookieHeader);
-  switch (action) {
-    case "start": return start();
-    case "callback": return callback(q, cookies);
-    case "me": return me(cookies);
-    case "logout": return logout();
-    default:
-      return { status: 404, body: { error: { type: "not_found", message: `Неизвестный маршрут входа: ${action}` } } };
+  // Любая неожиданная ошибка здесь — это ответ 500, а не падение процесса.
+  try {
+    switch (action) {
+      case "start": return start();
+      case "callback": return await callback(q, cookies);
+      case "me": return me(cookies);
+      case "logout": return logout();
+      default:
+        return { status: 404, body: { error: { type: "not_found", message: `Неизвестный маршрут входа: ${action}` } } };
+    }
+  } catch (e) {
+    console.error(`Ошибка в /api/auth/${action}:`, e);
+    return { status: 500, body: { error: { type: "server_error", message: "Вход временно недоступен" } } };
   }
 }
