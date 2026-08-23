@@ -28,3 +28,17 @@ export async function routeAuth(action, query, cookieHeader) {
     return { status: 500, body: { error: { type: "server_error", message: "Вход временно недоступен" } } };
   }
 }
+
+/**
+ * Обёртка для serverless-функций Vercel. Каждый эндпоинт входа — отдельный
+ * файл: динамический маршрут api/auth/[action].js там не подхватывался, и
+ * запрос проваливался в общий редирект на index.html.
+ */
+export function vercelAuthHandler(action) {
+  return async function handler(req, res) {
+    const { status, headers, body } = await routeAuth(action, req.query, req.headers?.cookie);
+    for (const [k, v] of Object.entries(headers || {})) res.setHeader(k, v);
+    if (body) return res.status(status).json(body);
+    return res.status(status).end();
+  };
+}
