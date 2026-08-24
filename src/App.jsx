@@ -248,7 +248,7 @@ async function apiCall(body) {
   const response = await fetch(API_ENDPOINT, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ max_tokens: 1000, ...body }),
+    body: JSON.stringify({ max_tokens: 3000, ...body }),
   });
   const data = await response.json();
   if (!data.content) throw new Error(apiError(data, response.status));
@@ -355,7 +355,9 @@ TEASER: <текст загадки>`;
 
 async function buildCharMap(chat, lang) {
   const sum = chat.summary ? `\nИз разговора с читателем уже известно: ${chat.summary}` : "";
-  return apiCall({ messages: [{ role: "user", content: `Книга: «${chat.book}». ${chat.bookInfo ? `Описание: ${chat.bookInfo}.` : ""}${sum}\nЧитатель дочитал до: ${chat.finished ? "конца книги" : chat.progress}.
+  // Промпт с тремя запретами подряд заставляет модель взвешивать каждого
+  // героя, и на 1000 токенах раздумья съедали весь бюджет до первого слова.
+  return apiCall({ max_tokens: 4000, messages: [{ role: "user", content: `Книга: «${chat.book}». ${chat.bookInfo ? `Описание: ${chat.bookInfo}.` : ""}${sum}\nЧитатель дочитал до: ${chat.finished ? "конца книги" : chat.progress}.
 
 Составь список персонажей, которые уже встретились К ЭТОМУ МЕСТУ. СТРОГО:
 - НЕ упоминай героев, появляющихся позже, и НЕ раскрывай про них будущих фактов (это спойлер).
@@ -1491,9 +1493,9 @@ function AuthScreen({ t, lang, onLangCycle, onGuest, problem }) {
       <h1 className="pxfont" style={{ display: "flex", alignItems: "center", justifyContent: "center",
         gap: 10, fontSize: 20, color: T.gold, margin: "6px 0 0", lineHeight: 1.4,
         textShadow: `0 0 14px rgba(244,185,73,0.35)` }}>
-        <img src={la("sparkle_title_left")} alt="" style={{ width: 16, height: "auto" }} />
+        <img src={la("title_sparkle_left")} alt="" style={{ width: 10, height: "auto" }} />
         ЧИТАЕМ ВМЕСТЕ
-        <img src={la("sparkle_title_right")} alt="" style={{ width: 13, height: "auto" }} />
+        <img src={la("title_sparkle_right")} alt="" style={{ width: 11, height: "auto" }} />
       </h1>
 
       <div className="pxfont" style={{ fontSize: 9, color: T.white, opacity: 0.85, marginTop: 10,
@@ -1508,7 +1510,7 @@ function AuthScreen({ t, lang, onLangCycle, onGuest, problem }) {
         {features.map(([icon, text], i) => (
           <div key={icon} style={{ display: "flex", alignItems: "center", gap: 12, padding: "13px 0",
             borderTop: i ? `1px dashed ${T.outline}` : "none" }}>
-            <img src={la(icon)} alt="" style={{ width: 26, height: "auto", flexShrink: 0 }} />
+            <img src={la(icon)} alt="" style={{ width: 22, height: "auto", flexShrink: 0 }} />
             <span className="hand" style={{ fontSize: 17, color: T.white, lineHeight: 1.3 }}>{text}</span>
           </div>
         ))}
@@ -1524,14 +1526,14 @@ function AuthScreen({ t, lang, onLangCycle, onGuest, problem }) {
         {AUTH_PROVIDERS.map((p) => {
           const inner = (
             <>
-              <img src={la(p.logo)} alt="" style={{ width: 28, height: "auto", flexShrink: 0,
+              <img src={la(p.logo)} alt="" style={{ width: 24, height: "auto", flexShrink: 0,
                 filter: p.ready ? "none" : "grayscale(1)", opacity: p.ready ? 1 : 0.55 }} />
               <span className="pxfont" style={{ flex: 1, textAlign: "left", fontSize: p.ready ? 11 : 10,
                 lineHeight: 1.5 }}>
                 {p.ready ? `${t("authWith")} ${p.label}` : p.label}
               </span>
               {p.ready
-                ? <img src={la("primary_arrow")} alt="" style={{ width: 16, height: "auto", flexShrink: 0 }} />
+                ? <img src={la("primary_arrow")} alt="" style={{ width: 12, height: "auto", flexShrink: 0 }} />
                 : <span className="hand" style={{ fontSize: 16, color: T.muted, flexShrink: 0 }}>{t("authSoon")}</span>}
             </>
           );
@@ -1554,7 +1556,7 @@ function AuthScreen({ t, lang, onLangCycle, onGuest, problem }) {
       {/* Разделитель: дальше — вход не обязателен. */}
       <div style={{ display: "flex", alignItems: "center", gap: 12, width: "100%", maxWidth: 360, marginTop: 26 }}>
         <div style={{ flex: 1, borderTop: `1px dashed ${T.outline}` }} />
-        <img src={la("divider_book_icon")} alt="" style={{ width: 26, height: "auto" }} />
+        <span style={{ fontSize: 15, lineHeight: 1, opacity: 0.75 }}>📖</span>
         <div style={{ flex: 1, borderTop: `1px dashed ${T.outline}` }} />
       </div>
 
