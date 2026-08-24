@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect } from "react";
+import { pickBooks, bookKey } from "./books";
 
 // ——— Пиксельная тема ———
 const T = {
@@ -317,35 +318,35 @@ async function recommendNext(chats, lang, mood) {
   throw new Error("rec failed");
 }
 
-async function blindRecs(chats, lang) {
-  const shelf = chats.map((c) => `«${c.book}»`).join(", ") || "разные хорошие книги";
-  const prompt = `Читатель обсуждал книги: ${shelf}. Придумай 3 «свидания вслепую» с РЕАЛЬНО существующими, известными книгами (не из его списка). Не выдумывай несуществующих книг и авторов.
+async function blindRecs(chats, lang, seenKeys = []) {
+  // Книги берём из своего пула, а не у модели: раньше на неизменный промпт
+  // она выдавала одни и те же бестселлеры, а изредка и несуществующие. Теперь
+  // её работа — только загадка про конкретную, заведомо реальную книгу.
+  const { picked } = pickBooks(3, seenKeys, chats.map((c) => c.book));
+  if (!picked.length) throw new Error("нет книг для подбора");
 
-Правила загадки: 2–3 предложения, обращайся к читателю на «ты», начни с яркой атмосферной детали мира книги, закончи крючком-вопросом или недосказанностью. НЕ называй книгу и имена героев. ЗАПРЕЩЕНЫ пустые фразы вроде «эта книга изменит тебя», «шедевр, который...».
+  const list = picked.map((b, i) => `${i + 1}. «${b.t}» — ${b.a}`).join("\n");
+  const prompt = `Вот три книги:
+${list}
+
+Для КАЖДОЙ напиши «свидание вслепую» — загадку, по которой читатель захочет её открыть, не зная названия.
+
+Правила загадки: 2–3 предложения, обращайся к читателю на «ты», начни с яркой атмосферной детали мира книги, заинтригуй настроением, НЕ называй ни автора, ни героев, ни название, не раскрывай поворотов сюжета.
 
 Язык загадок: ${LANG_NAME[lang] || LANG_NAME.ru}.
 
-Ответь СТРОГО в этом формате (метки TEASER и BOOK — всегда латиницей, ровно 3 блока, ничего кроме них):
+Ответь СТРОГО в этом формате (метки латиницей, ровно 3 блока, в том же порядке, ничего кроме них):
 TEASER: <текст загадки>
-BOOK: <Название> | <Автор>
-TEASER: ...
-BOOK: ...
-TEASER: ...
-BOOK: ...`;
+TEASER: <текст загадки>
+TEASER: <текст загадки>`;
+
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
       const raw = await apiCall({ messages: [{ role: "user", content: prompt }] });
-      const out = [];
-      const blocks = raw.split(/TEASER:/i).slice(1);
-      for (const b of blocks) {
-        const [teaserPart, bookPart] = b.split(/BOOK:/i);
-        if (!teaserPart || !bookPart) continue;
-        const teaser = teaserPart.trim();
-        const bookLine = bookPart.split(/\n/)[0].trim();
-        const [title, author] = bookLine.split("|").map((x) => (x || "").trim());
-        if (teaser && title) out.push({ teaser, title, author: author || "" });
-      }
-      if (out.length >= 1) return out.slice(0, 3);
+      const teasers = raw.split(/TEASER:/i).slice(1).map((t) => t.trim()).filter(Boolean);
+      if (teasers.length < picked.length) continue;
+      // Массив — в той форме, в какой его рисует библиотека.
+      return picked.map((b, i) => ({ teaser: teasers[i], title: b.t, author: b.a }));
     } catch {}
   }
   throw new Error("blind failed");
@@ -782,7 +783,7 @@ function Quotes({ t, chats, onUpdateChat, onBack }) {
 }
 
 // ——— Библиотека ———
-function Library({ t, lang, chats, settings, onOpen, onNew, onDelete, onMenu, onQuotes, onProfile, onIntroDone, onQuickAdd }) {
+function Library({ t, lang, chats, settings, onOpen, onNew, onDelete, onMenu, onQuotes, onProfile, onIntroDone, onQuickAdd, onSettings }) {
   const [confirmId, setConfirmId] = useState(null);
   const [rec, setRec] = useState(null);
   const [recBusy, setRecBusy] = useState(false);
@@ -805,7 +806,15 @@ function Library({ t, lang, chats, settings, onOpen, onNew, onDelete, onMenu, on
   async function getBlind() {
     if (blindBusy) return;
     setBlindBusy(true); setBlind(null); setRec(null); setRevealed({});
-    try { setBlind(await blindRecs(chats, lang)); } catch { setBlind("err"); }
+    try {
+      const seen = settings.blindSeen || [];
+      const picks = await blindRecs(chats, lang, seen);
+      setBlind(picks);
+      // Запоминаем показанное, чтобы в следующий раз выпали другие книги.
+      // Ограничиваем список: пул сам сбрасывается, когда книги кончаются.
+      const next = [...seen, ...picks.map((p) => bookKey({ t: p.title, a: p.author }))];
+      onSettings({ ...settings, blindSeen: next.slice(-200) });
+    } catch { setBlind("err"); }
     setBlindBusy(false);
   }
 
@@ -1703,6 +1712,7 @@ export default function App() {
           onNew={() => { if (chats.length < limit) { setView("setup"); } else if (!settings.pro) { setView("pro"); } }}
           onDelete={deleteChat} onMenu={() => setView("home")} onQuotes={() => setView("quotes")} onProfile={() => setView("profile")}
           onIntroDone={() => persistSettings({ ...settings, seenIntro: true })}
+          onSettings={persistSettings}
           onQuickAdd={(data) => { const chat = { id: Date.now(), ...data, messages: [], quotes: [], notes: [], predictions: [], emo: [], charMap: "", slow: false, discussLang: null, polyLevel: "", finished: false, lastSeen: Date.now(), createdAt: Date.now() }; persistChats([chat, ...(chats || [])]); }} />
       )}
       {showTabs && <TabBar t={t} view={view} onGo={(id) => { setActiveId(null); setView(id); }} />}
