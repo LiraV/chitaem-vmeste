@@ -33,7 +33,7 @@ function selectedProvider() {
   return "openai";
 }
 
-const MAX_TOKENS_CAP = 4000;
+const MAX_TOKENS_CAP = 16000;
 const MAX_MESSAGES = 80;
 const MAX_CHARS = 400_000;
 

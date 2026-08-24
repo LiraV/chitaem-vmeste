@@ -8,6 +8,12 @@
 const DEFAULT_URL = "https://api.openai.com/v1/chat/completions";
 const DEFAULT_MODEL = "gpt-5.5";
 
+// У моделей с рассуждением скрытые токены размышления списываются из того же
+// max_completion_tokens, что и видимый ответ. На длинных инструкциях (карта
+// героев, викторина) модель успевала израсходовать весь бюджет на раздумья и
+// возвращала пустой текст. "low" оставляет место ответу и заодно дешевле.
+const DEFAULT_REASONING_EFFORT = "low";
+
 /**
  * @param {{system?: string, messages: Array<{role: string, content: string}>,
  *          maxTokens: number}} req
@@ -34,6 +40,10 @@ export async function complete({ system, messages, maxTokens }) {
     max_completion_tokens: maxTokens,
   };
 
+  // Пустая строка в переменной = не отправлять параметр вовсе.
+  const effort = process.env.OPENAI_REASONING_EFFORT ?? DEFAULT_REASONING_EFFORT;
+  if (effort) payload.reasoning_effort = effort;
+
   // Reasoning models reject `temperature`, so only send it when explicitly
   // configured for a model known to accept it.
   if (process.env.OPENAI_TEMPERATURE) {
@@ -47,13 +57,22 @@ export async function complete({ system, messages, maxTokens }) {
   if (process.env.OPENAI_ORG) headers["openai-organization"] = process.env.OPENAI_ORG;
   if (process.env.OPENAI_PROJECT) headers["openai-project"] = process.env.OPENAI_PROJECT;
 
-  let upstream;
+  const url = process.env.OPENAI_API_URL || DEFAULT_URL;
+  const post = (body) => fetch(url, { method: "POST", headers, body: JSON.stringify(body) });
+
+  let upstream, raw;
   try {
-    upstream = await fetch(process.env.OPENAI_API_URL || DEFAULT_URL, {
-      method: "POST",
-      headers,
-      body: JSON.stringify(payload),
-    });
+    upstream = await post(payload);
+    raw = await upstream.text();
+
+    // Не все модели принимают reasoning_effort. Если дело в нём — повторяем
+    // без него, чтобы выбор модели не ломал приложение.
+    if (upstream.status === 400 && payload.reasoning_effort && /reasoning_effort/i.test(raw)) {
+      console.warn("Модель не принимает reasoning_effort — повторяю без него");
+      const { reasoning_effort: _drop, ...plain } = payload;
+      upstream = await post(plain);
+      raw = await upstream.text();
+    }
   } catch (e) {
     console.error("Upstream request to OpenAI failed:", e);
     return {
@@ -62,7 +81,6 @@ export async function complete({ system, messages, maxTokens }) {
     };
   }
 
-  const raw = await upstream.text();
   let data;
   try {
     data = JSON.parse(raw);
