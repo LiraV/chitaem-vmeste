@@ -520,6 +520,13 @@ function Panel({ title, onClose, t, children }) {
 }
 
 // ——— Главное меню (титульный экран) ———
+// В словарях у части подписей эмодзи вшит в саму строку («✂️ ЦИТАТЫ»).
+// Там, где иконка теперь рисуется картинкой, эмодзи из текста убираем.
+const stripIcon = (s) => String(s).replace(/^[^\p{L}\p{N}]+/u, "").trim();
+
+// Ассеты экрана «Моя библиотека».
+const lb = (name) => `${import.meta.env.BASE_URL}art/library/${name}.webp`;
+
 // Ассеты экрана меню.
 const ma = (name) => `${import.meta.env.BASE_URL}art/menu/${name}.webp`;
 
@@ -858,18 +865,27 @@ function Library({ t, lang, chats, settings, onOpen, onNew, onDelete, onMenu, on
           </div>
         </div>
       )}
-      <Bookshelf />
-      <ShelfBuddy charId={settings.charId} />
+      {/* Полка с сидящим котом — одной картинкой из пака. */}
+      <img src={lb("top_shelf_library")} alt=""
+        style={{ width: "100%", maxWidth: 360, alignSelf: "center", height: "auto" }} />
       <div style={{ padding: "22px 16px 40px" }}>
         <div style={{ display: "flex", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
-          <button onClick={onQuotes} className="pxfont" style={smallBtn}>{t("quotes")}{quoteCount ? ` (${quoteCount})` : ""}</button>
-          <button onClick={onProfile} className="pxfont" style={smallBtn}>📊</button>
-          <button onClick={onMenu} className="pxfont" style={smallBtn}>{t("menu")}</button>
+          <button onClick={onQuotes} className="pxfont" style={smallBtn}>
+            <img src={lb("header_quotes_icon")} alt="" style={{ width: 15, height: "auto", verticalAlign: "-3px", marginRight: 6 }} />
+            {stripIcon(t("quotes"))}{quoteCount ? ` (${quoteCount})` : ""}
+          </button>
+          <button onClick={onProfile} className="pxfont" style={smallBtn} aria-label={stripIcon(t("profileLbl"))}>
+            <img src={lb("header_stats_icon")} alt="" style={{ width: 16, height: "auto", verticalAlign: "-3px" }} />
+          </button>
+          <button onClick={onMenu} className="pxfont" style={smallBtn}><><img src={lb("header_menu_icon")} alt="" style={{ width: 15, height: "auto", verticalAlign: "-2px", marginRight: 6 }} />{stripIcon(t("menu"))}</></button>
         </div>
         <div style={{ textAlign: "center", margin: "10px 0 14px" }}>
           <h1 className="pxfont" style={{ fontSize: 19, color: T.gold, margin: "0 0 10px", lineHeight: 1.5, textShadow: `3px 3px 0 ${T.outline}` }}>{t("library")}</h1>
           <p className="hand" style={{ color: T.muted, fontSize: 19, margin: 0 }}>
-            {chats.length === 0 ? t("empty") : `${t("count")}: ${chats.length} / ${limit}${settings.pro ? "" : ` (${t("free")})`}`}
+          <img src={lb("title_divider")} alt=""
+            style={{ display: "block", width: "min(200px, 70%)", height: "auto", margin: "0 auto 10px" }} />
+          <div style={{ display: "none" }} />
+          {chats.length === 0 ? t("empty") : `${t("count")}: ${chats.length} / ${limit}${settings.pro ? "" : ` (${t("free")})`}`}
           </p>
         </div>
 
@@ -896,7 +912,9 @@ function Library({ t, lang, chats, settings, onOpen, onNew, onDelete, onMenu, on
                       {c.finished ? "🏁 " : ""}{c.book.toUpperCase()}
                     </div>
                     <div className="hand" style={{ fontSize: 16, marginTop: 3, color: "#6b573a" }}>
-                      {c.finished ? `🏁 ${t("finished")}` : `🔖 ${c.progress}`}{c.goal ? " · 🎯" : ""}
+                      {c.finished ? `🏁 ${t("finished")}` : (
+                        <><img src={lb("bookmark_icon")} alt="" style={{ width: 13, height: "auto", verticalAlign: "-2px", marginRight: 5 }} />{c.progress}</>
+                      )}{c.goal ? " · 🎯" : ""}
                     </div>
                     {(() => {
                       const share = c.finished ? 1 : readShare(c.progress, c.total);
@@ -919,7 +937,7 @@ function Library({ t, lang, chats, settings, onOpen, onNew, onDelete, onMenu, on
                 <button onClick={() => (confirming ? (onDelete(c.id), setConfirmId(null)) : setConfirmId(c.id))}
                   className="pxfont"
                   style={{ ...px(), background: confirming ? T.red : T.btn, color: confirming ? "#fff" : T.muted, padding: "0 12px", fontSize: confirming ? 8 : 12, cursor: "pointer", flexShrink: 0 }}>
-                  {confirming ? t("sure") : "✕"}
+                  {confirming ? t("sure") : <img src={lb("delete_x_icon")} alt="" style={{ width: 13, height: "auto" }} />}
                 </button>
               </div>
             );
@@ -932,8 +950,8 @@ function Library({ t, lang, chats, settings, onOpen, onNew, onDelete, onMenu, on
         </button>
 
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginTop: 14 }}>
-          <button onClick={() => { setMoodOpen((v) => !v); setRec(null); setBlind(null); }} disabled={chats.length === 0} className="pxfont" style={{ ...px(moodOpen ? T.gold : T.outline), background: T.btn, color: chats.length ? T.gold : "#55537a", padding: "13px 4px", fontSize: 9, cursor: "pointer", lineHeight: 1.5 }}>{t("recommend")}</button>
-          <button onClick={getBlind} className="pxfont" style={{ ...px(), background: T.btn, color: T.gold, padding: "13px 4px", fontSize: 9, cursor: "pointer", lineHeight: 1.5 }}>{t("blindLbl")}</button>
+          <button onClick={() => { setMoodOpen((v) => !v); setRec(null); setBlind(null); }} disabled={chats.length === 0} className="pxfont" style={{ ...px(moodOpen ? T.gold : T.outline), background: T.btn, color: chats.length ? T.gold : "#55537a", padding: "13px 4px", fontSize: 9, cursor: "pointer", lineHeight: 1.5 }}><><img src={lb("recommend_icon")} alt="" style={{ width: 18, height: "auto", verticalAlign: "-4px", marginRight: 6 }} />{stripIcon(t("recommend"))}</></button>
+          <button onClick={getBlind} className="pxfont" style={{ ...px(), background: T.btn, color: T.gold, padding: "13px 4px", fontSize: 9, cursor: "pointer", lineHeight: 1.5 }}><><img src={lb("surprise_icon")} alt="" style={{ width: 18, height: "auto", verticalAlign: "-4px", marginRight: 6 }} />{stripIcon(t("blindLbl"))}</></button>
         </div>
 
         {moodOpen && (
@@ -981,6 +999,11 @@ function Library({ t, lang, chats, settings, onOpen, onNew, onDelete, onMenu, on
         ))}
         {blind === "err" && <p className="hand" style={{ color: T.red, fontSize: 17, textAlign: "center", marginTop: 12 }}>{t("errMsg")}</p>}
       </div>
+
+      {/* Нижняя сцена: фонарь на книгах, кружка, растение. Декор — прячем
+          от программ чтения с экрана. */}
+      <img src={lb("bottom_scene_full")} alt="" aria-hidden
+        style={{ width: "100%", maxWidth: 360, alignSelf: "center", height: "auto", marginTop: 16 }} />
     </div>
   );
 }
