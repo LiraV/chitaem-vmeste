@@ -1069,8 +1069,42 @@ function Chat({ t, lang, settings, chat, onUpdate, onBack, addXp, addMinutes }) 
   const nextId = useRef(Math.max(0, ...chat.messages.map((m) => m.id || 0)) + 1);
   const initialLastSeen = useRef(chat.lastSeen || 0);
 
-  const scrollDown = () => endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
-  useEffect(scrollDown, [messages, busy]);
+  // Прокрутка за растущим ответом.
+  //
+  // Плавная анимация здесь не годится: во время печати её пришлось бы
+  // запускать каждые ~130 мс, и каждая следующая перебивает предыдущую —
+  // просмотр так и не доезжает до низа. Поэтому за печатью следуем мгновенно,
+  // а плавно прокручиваем только при появлении нового сообщения.
+  // Прокручиваем окно к настоящему низу, а не подводим якорь.
+  // scrollIntoView равняет якорь по нижнему краю окна — а там прилипшее поле
+  // ввода, и последние строки ответа оказываются под ним. Разрыв ровно в его
+  // высоту, около 120 px, и был тем, что приходилось доскроливать руками.
+  const scrollDown = (smooth = true) =>
+    window.scrollTo({ top: document.documentElement.scrollHeight, behavior: smooth ? "smooth" : "auto" });
+
+  // Если читатель сам ушёл вверх перечитать — не тянем его обратно.
+  // Слушаем колесо и касание, а не событие scroll: наша собственная прокрутка
+  // тоже порождает scroll, и по нему нельзя отличить намерение человека.
+  const follow = useRef(true);
+  useEffect(() => {
+    const check = () => {
+      const gap = document.documentElement.scrollHeight - window.innerHeight - window.scrollY;
+      follow.current = gap < 120;
+    };
+    const opts = { passive: true };
+    window.addEventListener("wheel", check, opts);
+    window.addEventListener("touchmove", check, opts);
+    return () => {
+      window.removeEventListener("wheel", check);
+      window.removeEventListener("touchmove", check);
+    };
+  }, []);
+
+  // Новое сообщение — возвращаемся вниз в любом случае: читатель либо только
+  // что написал сам, либо ждёт ответа.
+  useEffect(() => { follow.current = true; scrollDown(true); }, [messages, busy]);
+
+  const scrollTick = () => { if (follow.current) scrollDown(false); };
   useEffect(() => {
     const stored = messages.length > 320 ? messages.slice(-280) : messages; // страховка от переполнения хранилища; старое живёт в конспекте
     onUpdate({ ...chat, companionId, progress, finished, messages: stored, quotes, notes, predictions, emo, charMap, slow, discussLang, polyLevel, summary, summarizedAt: lastSummarizedAt.current, lastSeen: Date.now() });
@@ -1336,7 +1370,8 @@ function Chat({ t, lang, settings, chat, onUpdate, onBack, addXp, addMinutes }) 
                 <div className="hand"
                   style={{ background: m.role === "user" ? T.panelSolid : T.paperMsg, color: m.role === "user" ? T.white : T.ink, ...px(), boxShadow: `4px 4px 0 rgba(0,0,0,0.35)`, padding: m.role === "user" ? "10px 14px" : "10px 30px 10px 14px", fontSize: 19, lineHeight: 1.35, whiteSpace: "pre-wrap" }}>
                   {m.role === "assistant" && m.id === animateId ? (
-                    <TypeMessage text={m.content} animate onTick={scrollDown} onDone={() => setAnimateId(null)} />
+                    <TypeMessage text={m.content} animate onTick={scrollTick}
+                      onDone={() => { setAnimateId(null); scrollTick(); }} />
                   ) : (m.content)}
                 </div>
                 {m.role === "assistant" && !m.meta && m.id !== animateId && (
