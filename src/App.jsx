@@ -520,33 +520,60 @@ function Panel({ title, onClose, t, children }) {
 }
 
 // ——— Главное меню (титульный экран) ———
+// Ассеты экрана меню.
+const ma = (name) => `${import.meta.env.BASE_URL}art/menu/${name}.webp`;
+
 function Home({ t, settings, chats, onGo }) {
   const level = 1 + Math.floor((settings.xp || 0) / 100);
-  const bigBtn = (icon, label, view, gold) => (
-    <button onClick={() => onGo(view)} className="pxfont"
-      style={{ ...px(gold ? T.gold : T.outline), background: gold ? T.gold : T.btn, color: gold ? T.outline : T.white, width: "100%", padding: "17px 10px", fontSize: 11, cursor: "pointer", lineHeight: 1.6, boxShadow: `4px 4px 0 rgba(0,0,0,0.35)` }}>
-      {icon} {label}
-    </button>
-  );
+
+  // Иконка, подпись, экран, «главная» ли кнопка. Ширины — из манифеста пака.
+  const items = [
+    ["library_icon", 24, t("library"), "library", true],
+    ["settings_icon", 23, t("settingsTitle"), "settings", false],
+    ["shop_icon", 24, t("shopTitle"), "shop", false],
+    ["trophy_icon", 23, t("achTitle"), "ach", false],
+    ["star_icon", 20, `${t("proTitle")}${settings.pro ? "" : " · 990 ₽"}`, "pro", false],
+  ];
+
   return (
-    <div className="view" style={{ maxWidth: 600, margin: "0 auto", position: "relative", zIndex: 1, minHeight: "100vh", display: "flex", flexDirection: "column" }}>
-      <Bookshelf />
-      <ShelfBuddy charId={settings.charId} />
-      <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: "26px 22px 30px", gap: 12 }}>
-        <img src={IMG.logo} alt="" className="logo" style={{ width: 104, filter: "drop-shadow(4px 4px 0 rgba(0,0,0,0.45))" }} />
-        <h1 className="pxfont" style={{ fontSize: 19, color: T.gold, margin: "14px 0 2px", textAlign: "center", lineHeight: 1.5, textShadow: `3px 3px 0 ${T.outline}` }}>ЧИТАЕМ ВМЕСТЕ</h1>
-        <p className="hand" style={{ color: T.muted, fontSize: 18, margin: "0 0 6px", textAlign: "center" }}>{t("homeHint")}</p>
-        <div className="pxfont" style={{ fontSize: 9, color: T.green, marginBottom: 14 }}>
-          {t("level")} {level} · 🔥 {settings.streak?.count || 0} {t("streakDays")}
-        </div>
-        <div style={{ display: "grid", gap: 11, width: "100%", maxWidth: 340 }}>
-          {bigBtn("📚", t("library"), "library", true)}
-          {bigBtn("⚙️", t("settingsTitle"), "settings")}
-          {bigBtn("🛒", t("shopTitle"), "shop")}
-          {bigBtn("🏆", t("achTitle"), "ach")}
-          {bigBtn(settings.pro ? "✓" : "⭐", `${t("proTitle")}${settings.pro ? "" : " · 990 ₽"}`, "pro")}
-        </div>
-        <p className="pxfont" style={{ color: T.muted, fontSize: 8, marginTop: 20, opacity: 0.7 }}>v1.2</p>
+    <div className="view" style={{ maxWidth: 600, margin: "0 auto", position: "relative", zIndex: 1,
+      minHeight: "100vh", display: "flex", flexDirection: "column", alignItems: "center",
+      padding: "0 20px 28px" }}>
+
+      {/* Полка и сцена с котом — одними картинками, как в паке. */}
+      <img src={ma("top_shelf_full")} alt="" style={{ width: "100%", maxWidth: 360, height: "auto" }} />
+      <img src={ma("hero_cat_reading_scene")} alt="" style={{ width: "100%", maxWidth: 280, height: "auto", marginTop: 4 }} />
+
+      <h1 className="pxfont" style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 10,
+        fontSize: 19, color: T.gold, margin: "10px 0 0", lineHeight: 1.4,
+        textShadow: `0 0 14px rgba(244,185,73,0.35), 3px 3px 0 ${T.outline}` }}>
+        <img src={ma("title_sparkle_left")} alt="" style={{ width: 14, height: "auto" }} />
+        ЧИТАЕМ ВМЕСТЕ
+        <img src={ma("title_sparkle_right")} alt="" style={{ width: 13, height: "auto" }} />
+      </h1>
+
+      <p className="pxfont" style={{ color: T.white, opacity: 0.8, fontSize: 9, letterSpacing: 0.4,
+        margin: "12px 0 0", textAlign: "center" }}>{t("homeHint")}</p>
+
+      <div className="pxfont" style={{ fontSize: 9, color: T.green, margin: "14px 0 0" }}>
+        {t("level")} {level} · 🔥 {settings.streak?.count || 0} {t("streakDays")}
+      </div>
+
+      <div style={{ display: "grid", gap: 10, width: "100%", maxWidth: 340, marginTop: 18 }}>
+        {items.map(([icon, w, label, view, gold]) => (
+          <button key={view} onClick={() => onGo(view)} className="pxfont"
+            style={{ display: "flex", alignItems: "center", gap: 13, width: "100%", boxSizing: "border-box",
+              padding: "14px 16px", borderRadius: 12, cursor: "pointer", fontSize: 11, lineHeight: 1.4,
+              border: `2px solid ${gold ? T.gold : T.outline}`,
+              background: gold ? `linear-gradient(180deg, ${T.gold}, #e0a63c)` : T.cardBg,
+              color: gold ? "#2a1e06" : T.white,
+              boxShadow: gold ? `0 0 18px rgba(244,185,73,0.35)` : "none" }}>
+            <img src={ma(icon)} alt="" style={{ width: w, height: "auto", flexShrink: 0 }} />
+            <span style={{ flex: 1, textAlign: "left" }}>{label}</span>
+            <img src={ma("chevron_right")} alt="" style={{ width: 8, height: "auto", flexShrink: 0,
+              opacity: gold ? 0.8 : 0.5 }} />
+          </button>
+        ))}
       </div>
     </div>
   );
@@ -1622,16 +1649,16 @@ const TAB_SCREENS = ["home", "library", "quotes", "profile"];
 
 function TabBar({ t, view, onGo }) {
   const tabs = [
-    ["home", "🏠", t("tabHome")],
-    ["library", "📚", t("tabShelf")],
-    ["quotes", "✂️", t("tabQuotes")],
-    ["profile", "📊", t("tabProfile")],
+    ["home", "bottom_nav_home_active", 26, t("tabHome")],
+    ["library", "bottom_nav_shelf", 24, t("tabShelf")],
+    ["quotes", "bottom_nav_quotes", 25, t("tabQuotes")],
+    ["profile", "bottom_nav_profile", 22, t("tabProfile")],
   ];
   return (
     <nav style={{ position: "fixed", left: 0, right: 0, bottom: 0, zIndex: 60, display: "flex",
       background: T.nightDeep, borderTop: `4px solid ${T.outline}`,
       paddingBottom: "env(safe-area-inset-bottom)" }}>
-      {tabs.map(([id, icon, label]) => {
+      {tabs.map(([id, icon, iw, label]) => {
         const on = view === id;
         return (
           <button key={id} onClick={() => onGo(id)} aria-current={on ? "page" : undefined}
@@ -1639,7 +1666,9 @@ function TabBar({ t, view, onGo }) {
               borderTop: `3px solid ${on ? T.gold : "transparent"}`, color: on ? T.gold : T.muted,
               padding: "9px 2px 10px", cursor: "pointer", display: "flex", flexDirection: "column",
               alignItems: "center", gap: 3 }}>
-            <span style={{ fontSize: 19, lineHeight: 1 }}>{icon}</span>
+            {/* Неактивные вкладки приглушаем, а не перекрашиваем: иконки цветные. */}
+            <img src={ma(icon)} alt="" style={{ width: iw, height: "auto",
+              opacity: on ? 1 : 0.5, filter: on ? "none" : "grayscale(0.5)" }} />
             <span className="pxfont" style={{ fontSize: 7 }}>{label}</span>
           </button>
         );
