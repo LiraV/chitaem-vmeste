@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect } from "react";
 import { pickBooks, bookKey } from "./books";
+import { evaluate, achName, achHint, groupName, achReward, GROUPS, ACHIEVEMENTS } from "./achievements";
 
 // ——— Пиксельная тема ———
 const T = {
@@ -136,6 +137,9 @@ const CHARACTERS = [
   { id: "raven", emoji: "🐦‍⬛", color: "#4a4a6a", price: 250 },
   { id: "robot", emoji: "🤖", color: "#7ac0c9", price: 400 },
 ];
+// Пороги достижений, требующих «всех»: сколько всего собеседников и сколько
+// персонажей вообще продаётся.
+const ACH_TOTALS = { companions: COMPANIONS.length, owned: CHARACTERS.filter((c) => c.price > 0).length };
 const charById = (id) => CHARACTERS.find((c) => c.id === id) || CHARACTERS[0];
 
 const EMOJIS = ["😍", "😢", "😱", "🥱", "🤯"];
@@ -369,7 +373,7 @@ async function buildCharMap(chat, lang) {
 }
 
 // ——— Хранилище ———
-const DEFAULT_SETTINGS = { lang: "ru", charId: "cat", pro: false, xp: 0, spent: 0, tts: false, kids: false, owned: [], streak: { count: 0, last: "" }, minutes: 0, seenIntro: false, theme: "library" };
+const DEFAULT_SETTINGS = { lang: "ru", charId: "cat", pro: false, xp: 0, spent: 0, tts: false, kids: false, owned: [], streak: { count: 0, last: "" }, minutes: 0, seenIntro: false, theme: "library", flags: {}, achieved: [] };
 async function loadState() {
   let chats = [], settings = { ...DEFAULT_SETTINGS };
   try { const r = await window.storage.get("library-v1"); if (r) chats = JSON.parse(r.value); } catch {}
@@ -690,27 +694,51 @@ function Shop({ t, settings, onChange, onBack }) {
 }
 
 // ——— Достижения ———
-function Achievements({ t, settings, chats, onBack }) {
-  const list = [
-    { id: "first", ok: chats.length >= 1, icon: "📖", name: t("achFirst") },
-    { id: "five", ok: chats.length >= 5, icon: "📚", name: t("achFive") },
-    { id: "finish", ok: chats.some((c) => c.finished), icon: "🏁", name: t("achFinish") },
-    { id: "streak", ok: (settings.streak?.count || 0) >= 7, icon: "🔥", name: t("achStreak") },
-    { id: "pro", ok: settings.pro, icon: "⭐", name: t("achPro") },
-  ];
+function Achievements({ t, lang, settings, chats, onBack }) {
+  const list = evaluate(chats || [], settings, ACH_TOTALS);
+  const done = list.filter((a) => a.ok).length;
   return (
     <div className="view" style={{ maxWidth: 600, margin: "0 auto", position: "relative", zIndex: 1 }}>
       <Bookshelf />
       <div style={{ padding: "18px 16px 40px" }}>
         <button onClick={onBack} className="pxfont" style={smallBtn}>{t("back")}</button>
-        <h1 className="pxfont" style={{ fontSize: 17, color: T.gold, textAlign: "center", margin: "16px 0 16px", textShadow: `3px 3px 0 ${T.outline}` }}>🏆 {t("achTitle")}</h1>
-        <div style={{ display: "grid", gap: 8 }}>
-          {list.map((a) => (
-            <div key={a.id} className="hand" style={{ ...px(a.ok ? T.gold : T.outline), background: a.ok ? "rgba(60,50,20,0.6)" : T.cardBg, color: a.ok ? T.gold : T.muted, padding: "11px 13px", fontSize: 18, display: "flex", gap: 10, alignItems: "center", opacity: a.ok ? 1 : 0.6 }}>
-              <span style={{ fontSize: 20, filter: a.ok ? "none" : "grayscale(1) opacity(0.5)" }}>{a.icon}</span> {a.name}
-            </div>
-          ))}
+        <h1 className="pxfont" style={{ fontSize: 17, color: T.gold, textAlign: "center", margin: "16px 0 10px", textShadow: `3px 3px 0 ${T.outline}` }}>🏆 {t("achTitle")}</h1>
+        <p className="pxfont" style={{ fontSize: 9, color: T.muted, textAlign: "center", margin: "0 0 7px" }}>{done} / {list.length}</p>
+        <div style={{ ...px(T.outline), background: T.cardBg, height: 14, marginBottom: 20, padding: 0 }}>
+          <div style={{ height: "100%", width: `${Math.round((done / list.length) * 100)}%`, background: T.gold, transition: "width 0.4s" }} />
         </div>
+        {GROUPS.map((g) => {
+          const rows = list.filter((a) => a.group === g);
+          if (!rows.length) return null;
+          const got = rows.filter((a) => a.ok).length;
+          return (
+            <div key={g} style={{ marginBottom: 20 }}>
+              <h2 className="pxfont" style={{ fontSize: 9.5, color: T.gold, opacity: 0.85, margin: "0 0 9px", display: "flex", justifyContent: "space-between" }}>
+                <span>{groupName(lang, g)}</span><span style={{ opacity: 0.6 }}>{got}/{rows.length}</span>
+              </h2>
+              <div style={{ display: "grid", gap: 8 }}>
+                {rows.map((a) => (
+                  <div key={a.id} style={{ ...px(a.ok ? T.gold : T.outline), background: a.ok ? "rgba(60,50,20,0.6)" : T.cardBg, padding: "10px 12px", display: "flex", gap: 11, alignItems: "center" }}>
+                    <span style={{ fontSize: 22, flexShrink: 0, filter: a.ok ? "none" : "grayscale(1) opacity(0.4)" }}>{a.icon}</span>
+                    <div style={{ minWidth: 0, flex: 1 }}>
+                      <div className="hand" style={{ fontSize: 18, lineHeight: 1.15, color: a.ok ? T.gold : T.white }}>{achName(lang, a.id)}</div>
+                      <div className="hand" style={{ fontSize: 15, lineHeight: 1.2, color: T.muted }}>{achHint(lang, a.id)}</div>
+                      {!a.ok && a.need > 1 && (
+                        <div style={{ display: "flex", alignItems: "center", gap: 7, marginTop: 6 }}>
+                          <div style={{ flex: 1, height: 8, background: "rgba(0,0,0,0.35)", border: `2px solid ${T.outline}` }}>
+                            <div style={{ height: "100%", width: `${Math.round((a.cur / a.need) * 100)}%`, background: T.gold, opacity: 0.7 }} />
+                          </div>
+                          <span className="pxfont" style={{ fontSize: 7.5, color: T.muted, flexShrink: 0 }}>{a.cur}/{a.need}</span>
+                        </div>
+                      )}
+                    </div>
+                    {a.ok && <span className="pxfont" style={{ fontSize: 12, color: T.green, flexShrink: 0 }}>✓</span>}
+                  </div>
+                ))}
+              </div>
+            </div>
+          );
+        })}
       </div>
     </div>
   );
@@ -749,7 +777,7 @@ function ProScreen({ t, settings, onChange, onBack }) {
 }
 
 // ——— Профиль читателя ———
-function Profile({ t, chats, settings, onBack }) {
+function Profile({ t, chats, settings, onBack, onFlag }) {
   const msgs = chats.reduce((n, c) => n + c.messages.filter((m) => m.role === "user" && !m.hidden).length, 0);
   const quotes = chats.reduce((n, c) => n + (c.quotes || []).length, 0);
   const finished = chats.filter((c) => c.finished).length;
@@ -762,7 +790,7 @@ function Profile({ t, chats, settings, onBack }) {
   ];
   async function share() {
     const txt = `${t("profileLbl")} · «Читаем вместе»\n${t("level")} ${level} · 🔥${settings.streak?.count || 0}\n` + rows.map((r) => `${r[0]} ${r[1]} ${r[2]}`).join("\n");
-    if (await copyText(txt)) { setCopied(true); setTimeout(() => setCopied(false), 2000); }
+    if (await copyText(txt)) { onFlag("share"); setCopied(true); setTimeout(() => setCopied(false), 2000); }
   }
   return (
     <div className="view" style={{ maxWidth: 600, margin: "0 auto", position: "relative", zIndex: 1 }}>
@@ -850,7 +878,7 @@ function Library({ t, lang, chats, settings, onOpen, onNew, onDelete, onMenu, on
       // Запоминаем показанное, чтобы в следующий раз выпали другие книги.
       // Ограничиваем список: пул сам сбрасывается, когда книги кончаются.
       const next = [...seen, ...picks.map((p) => bookKey({ t: p.title, a: p.author }))];
-      onSettings({ ...settings, blindSeen: next.slice(-200) });
+      onSettings({ ...settings, blindSeen: next.slice(-200), flags: { ...(settings.flags || {}), blind: 1 } });
     } catch { setBlind("err"); }
     setBlindBusy(false);
   }
@@ -1083,7 +1111,7 @@ function Setup({ t, lang, pro, onStart, onBack }) {
 }
 
 // ——— Чат ———
-function Chat({ t, lang, settings, chat, onUpdate, onBack, addXp, addMinutes }) {
+function Chat({ t, lang, settings, chat, onUpdate, onBack, addXp, addMinutes, onFlag }) {
   const [companionId, setCompanionId] = useState(chat.companionId);
   const companion = companionById(companionId);
   const [progress, setProgress] = useState(chat.progress);
@@ -1235,6 +1263,7 @@ function Chat({ t, lang, settings, chat, onUpdate, onBack, addXp, addMinutes }) 
     setProgress(p);
     setEditingProgress(false);
     setNewProgress("");
+    onFlag("bookmark");
     addXp(10);
     setPendingEmo(p);
     setMessages((m) => [...m, { id: nextId.current++, role: "assistant", meta: "divider", content: `🔖 ${p}` }]);
@@ -1252,10 +1281,10 @@ function Chat({ t, lang, settings, chat, onUpdate, onBack, addXp, addMinutes }) 
     send(`Я только что ДОЧИТАЛ книгу до конца! Спойлер-защита снята. Поздравь меня в своём характере и предложи обсудить финал — начни с одного яркого вопроса о концовке.${preds}`, { hidden: true, ctxOverride: chatCtx({ finished: true }) });
   }
 
-  function requestLetter() { if (busy) return; setMessages((m) => [...m, { id: nextId.current++, role: "assistant", meta: "divider", content: "💌" }]); send("Напиши мне «письмо от собеседника» о нашей книге и разговоре: что я говорил, как менялось моё мнение, мои лучшие мысли, мои заметки на полях. Тёплое, личное, на «ты», 6–10 предложений.", { hidden: true }); }
-  function requestReview() { if (busy) return; setMessages((m) => [...m, { id: nextId.current++, role: "assistant", meta: "divider", content: "✒️" }]); send("Помоги мне написать рецензию на эту книгу: собери черновик из моих же мыслей и слов за весь наш разговор, моим голосом, 5–8 предложений, с оценкой по пятибалльной, которую предложи на основе моих высказываний. В конце спроси, что поправить.", { hidden: true }); }
-  function requestQuiz() { if (busy) return; setToolsOpen(false); setMessages((m) => [...m, { id: nextId.current++, role: "assistant", meta: "divider", content: "🎯" }]); send(`Устрой мне мини-викторину: задай 3 вопроса по событиям ${finished ? "всей книги" : "строго до моей закладки"}, пронумеруй 1–3. Я отвечу — тогда оцени и разбери. Сейчас просто задай вопросы.`, { hidden: true }); }
-  function requestDebate() { if (busy) return; setToolsOpen(false); setMessages((m) => [...m, { id: nextId.current++, role: "assistant", meta: "divider", content: "⚖️" }]); send(`Начни со мной структурированные дебаты по книге: предложи один спорный тезис (${finished ? "по всей книге" : "строго по прочитанному до моей закладки"}), предложи мне выбрать сторону «за» или «против». Дальше 3 раунда аргументов, в конце — честный вердикт, кто был убедительнее. Сейчас — только тезис и вопрос о стороне.`, { hidden: true }); }
+  function requestLetter() { if (busy) return; onFlag("letter"); setMessages((m) => [...m, { id: nextId.current++, role: "assistant", meta: "divider", content: "💌" }]); send("Напиши мне «письмо от собеседника» о нашей книге и разговоре: что я говорил, как менялось моё мнение, мои лучшие мысли, мои заметки на полях. Тёплое, личное, на «ты», 6–10 предложений.", { hidden: true }); }
+  function requestReview() { if (busy) return; onFlag("review"); setMessages((m) => [...m, { id: nextId.current++, role: "assistant", meta: "divider", content: "✒️" }]); send("Помоги мне написать рецензию на эту книгу: собери черновик из моих же мыслей и слов за весь наш разговор, моим голосом, 5–8 предложений, с оценкой по пятибалльной, которую предложи на основе моих высказываний. В конце спроси, что поправить.", { hidden: true }); }
+  function requestQuiz() { if (busy) return; onFlag("quiz"); setToolsOpen(false); setMessages((m) => [...m, { id: nextId.current++, role: "assistant", meta: "divider", content: "🎯" }]); send(`Устрой мне мини-викторину: задай 3 вопроса по событиям ${finished ? "всей книги" : "строго до моей закладки"}, пронумеруй 1–3. Я отвечу — тогда оцени и разбери. Сейчас просто задай вопросы.`, { hidden: true }); }
+  function requestDebate() { if (busy) return; onFlag("debate"); setToolsOpen(false); setMessages((m) => [...m, { id: nextId.current++, role: "assistant", meta: "divider", content: "⚖️" }]); send(`Начни со мной структурированные дебаты по книге: предложи один спорный тезис (${finished ? "по всей книге" : "строго по прочитанному до моей закладки"}), предложи мне выбрать сторону «за» или «против». Дальше 3 раунда аргументов, в конце — честный вердикт, кто был убедительнее. Сейчас — только тезис и вопрос о стороне.`, { hidden: true }); }
 
   function addNoteFn() {
     const v = noteVal.trim(); if (!v) return;
@@ -1269,6 +1298,7 @@ function Chat({ t, lang, settings, chat, onUpdate, onBack, addXp, addMinutes }) 
   }
   async function rebuildMap() {
     if (mapBusy) return;
+    onFlag("map");
     setMapBusy(true);
     try { setCharMap(await buildCharMap(chatCtx(), lang)); } catch { setCharMap("⚠"); }
     setMapBusy(false);
@@ -1762,6 +1792,16 @@ export default function App() {
   const chatsRef = useRef(chats);
   chatsRef.current = chats;
   function persistSettings(next) {
+    // Достижения за смену языка и темы ставятся здесь, а не в самих экранах:
+    // обе настройки меняются через onChange={persistSettings}, так что одно
+    // место ловит оба случая и никому не нужно передавать лишний коллбэк.
+    const prev = settingsRef.current;
+    if (prev && (next.lang !== prev.lang || next.theme !== prev.theme)) {
+      const f = { ...(next.flags || {}) };
+      if (next.lang !== prev.lang) f.lang = 1;
+      if (next.theme !== prev.theme) f.theme = 1;
+      next = { ...next, flags: f };
+    }
     if (next.theme !== settingsRef.current.theme) applyTheme(next.theme);
     settingsRef.current = next;
     setSettings(next);
@@ -1787,10 +1827,44 @@ export default function App() {
       setTimeout(() => setLevelParty(false), 2300);
     }
   }
+  // Отмечает разовое событие, которое иначе нигде не хранится: пройденную
+  // викторину, письмо герою, чтение за полночь. Повторные вызовы бесплатны.
+  function raiseFlag(name) {
+    const s = settingsRef.current;
+    if ((s.flags || {})[name]) return;
+    persistSettings({ ...s, flags: { ...(s.flags || {}), [name]: 1 } });
+  }
+
   function addMinutes(n) {
     const s = settingsRef.current;
     persistSettings({ ...s, minutes: (s.minutes || 0) + n });
   }
+
+  // Чтение за полночь — достижение, которое больше нигде не отражается.
+  useEffect(() => {
+    if (chats === null) return;
+    const h = new Date().getHours();
+    if (h >= 0 && h < 5) raiseFlag("night");
+  }, [chats]);
+
+  // Выдача достижений. Список пересчитывается по полке и настройкам, но XP
+  // начисляется только за те, которых ещё нет в settings.achieved, — иначе
+  // награда капала бы при каждой перерисовке.
+  useEffect(() => {
+    if (chats === null) return;
+    const s = settingsRef.current;
+    const earned = evaluate(chats, s, ACH_TOTALS).filter((a) => a.ok).map((a) => a.id);
+    const fresh = earned.filter((id) => !(s.achieved || []).includes(id));
+    if (!fresh.length) return;
+    const reward = fresh.reduce((sum, id) => sum + achReward(ACHIEVEMENTS.find((a) => a.id === id)), 0);
+    persistSettings({ ...s, achieved: earned, xp: (s.xp || 0) + reward });
+    // Показываем не больше трёх подряд: при первом запуске у давнего читателя
+    // разом закрывается десяток, и очередь плашек перекрыла бы весь экран.
+    fresh.slice(0, 3).forEach((id, i) => {
+      const a = ACHIEVEMENTS.find((x) => x.id === id);
+      setTimeout(() => pushToast(`${a.icon} ${achName(s.lang, id)}`), 400 + i * 850);
+    });
+  }, [chats, settings]);
 
   function createChat(data) {
     const chat = { id: Date.now(), ...data, cover: "", coverTried: false, messages: [], quotes: [], notes: [], predictions: [], emo: [], charMap: "", slow: false, discussLang: null, polyLevel: "", finished: false, lastSeen: Date.now(), createdAt: Date.now() };
@@ -1869,17 +1943,17 @@ export default function App() {
       ) : view === "shop" ? (
         <Shop t={t} settings={settings} onChange={persistSettings} onBack={() => setView("home")} />
       ) : view === "ach" ? (
-        <Achievements t={t} settings={settings} chats={chats} onBack={() => setView("home")} />
+        <Achievements t={t} lang={settings.lang} settings={settings} chats={chats} onBack={() => setView("home")} />
       ) : view === "pro" ? (
         <ProScreen t={t} settings={settings} onChange={persistSettings} onBack={() => setView("home")} />
       ) : view === "quotes" ? (
         <Quotes t={t} chats={chats} onUpdateChat={updateChat} onBack={() => setView("library")} />
       ) : view === "profile" ? (
-        <Profile t={t} chats={chats} settings={settings} onBack={() => setView("library")} />
+        <Profile t={t} chats={chats} settings={settings} onFlag={raiseFlag} onBack={() => setView("library")} />
       ) : view === "setup" ? (
         <Setup t={t} lang={settings.lang} pro={settings.pro} onStart={createChat} onBack={() => setView("library")} />
       ) : view === "chat" && active ? (
-        <Chat key={active.id} t={t} lang={settings.lang} settings={settings} chat={active} onUpdate={updateChat} onBack={() => { setActiveId(null); setView("library"); }} addXp={addXp} addMinutes={addMinutes} />
+        <Chat key={active.id} t={t} lang={settings.lang} settings={settings} chat={active} onUpdate={updateChat} onBack={() => { setActiveId(null); setView("library"); }} addXp={addXp} addMinutes={addMinutes} onFlag={raiseFlag} />
       ) : (
         <Library t={t} lang={settings.lang} chats={chats} settings={settings}
           onOpen={(id) => { setActiveId(id); setView("chat"); }}
