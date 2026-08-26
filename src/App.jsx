@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from "react";
-import { pickBooks, bookKey } from "./books";
+import { pickBooks, bookKey, BOOK_POOL, GENRES, genreName } from "./books";
 import { evaluate, achName, achHint, groupName, achReward, GROUPS, ACHIEVEMENTS } from "./achievements";
 
 // ——— Пиксельная тема ———
@@ -161,7 +161,7 @@ function systemPrompt(chat, companion, lang, kids) {
 
 ЯЗЫК: отвечай на ${LANG_NAME[lang] || LANG_NAME.ru}, если ниже не указан иной язык обсуждения.${poly}
 
-Книга пользователя: «${chat.book}».
+Книга пользователя: «${chat.book}»${chat.author ? ` (автор — ${chat.author})` : ""}.
 ${chat.finished ? "Пользователь дочитал книгу до конца." : `Пользователь дочитал до: ${chat.progress}.`}
 ${chat.bookInfo ? `\nОписание книги от пользователя (главный источник знаний о ней):\n«${chat.bookInfo}»\n` : ""}${goal}${slow}${kid}
 ${chat.summary ? `\nПАМЯТЬ О НАЧАЛЕ РАЗГОВОРА (старые сообщения сжаты в конспект — опирайся на него как на общую историю):\n${chat.summary}\n` : ""}
@@ -288,6 +288,98 @@ async function searchBookInfo(title, lang) {
   const text = (data.content || []).map((b) => (b.type === "text" ? b.text : "")).filter(Boolean).join("\n").trim();
   if (!text || text.includes("NOT_FOUND")) throw new Error("not found");
   return text;
+}
+
+// ——— Поиск книги ———
+// Пул на 626 книг — это витрина для подбора, а не каталог: читатель приходит
+// с чем угодно, вплоть до вчерашней новинки. Подсказки собираются из двух
+// источников: собственный пул отвечает мгновенно и без сети, а модель знает
+// почти всё изданное, включая новинки, — ей мы доверяем название и автора.
+//
+// Open Library, откуда берутся обложки, для самих подсказок не подошла: на
+// «Норвежский лес» она возвращает «Norwegian Wood — 村上春樹» и сборник
+// фанфиков, то есть чужой язык и мусор вперемешку. Обложку она находит по
+// готовому названию и дальше этого не привлекается.
+//
+// Каталоги коммерческих магазинов сюда не годятся: их выдачу нельзя забирать
+// автоматически, а модель и так знает те же книги.
+
+const normTitle = (s) => String(s || "").toLowerCase().replace(/ё/g, "е").replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+const suggestKey = (b) => `${normTitle(b.t)}|${normTitle(b.a).split(" ").slice(-1)[0]}`;
+
+function poolMatches(q, lang) {
+  const n = normTitle(q);
+  if (n.length < 2) return [];
+  // Название, автор — и заодно жанр: на «детектив» или «фэнтези» читатель
+  // ждёт книг этого жанра, а не пустого списка.
+  const byGenre = GENRES.filter((g) => normTitle(genreName(lang, g)).includes(n));
+  const hits = BOOK_POOL.filter((b) =>
+    normTitle(b.t).includes(n) || normTitle(b.a).includes(n) || byGenre.includes(b.g));
+  // Совпадения с начала названия читатель ожидает увидеть первыми.
+  hits.sort((a, b) => Number(normTitle(b.t).startsWith(n)) - Number(normTitle(a.t).startsWith(n)));
+  return hits.slice(0, 5).map((b) => ({ t: b.t, a: b.a, g: b.g }));
+}
+
+async function modelMatches(q, lang) {
+  const raw = await apiCall({
+    max_tokens: 700,
+    messages: [{ role: "user", content: `Читатель ищет книгу и набрал в строке поиска: «${q}».
+
+Перечисли до 8 РЕАЛЬНО СУЩЕСТВУЮЩИХ изданных книг, которые он может иметь в виду. Подойдут книги любого жанра и любой известности — не только классика: детективы, фэнтези, романы, нон-фикшн, young adult, ЛитРПГ, новинки последних лет.
+
+Строго запрещено выдумывать названия и авторов. Если ты не уверен, что книга существует, не включай её. Если не подходит ничего, ответь одним словом NOTHING.
+
+Названия давай на ${LANG_NAME[lang] || LANG_NAME.ru}, как книга издана на этом языке.
+
+Ответь СТРОГО построчно, без нумерации и без единого лишнего слова:
+BOOK: <название> | <автор> | <год первого издания>` }],
+  });
+  if (/NOTHING/i.test(raw)) return [];
+  return raw.split("\n")
+    .map((line) => line.match(/^\s*BOOK:\s*(.+)$/i))
+    .filter(Boolean)
+    .map((m) => m[1].split("|").map((x) => x.trim()))
+    .filter((parts) => parts[0] && parts[1])
+    .map((parts) => ({ t: parts[0], a: parts[1], y: parseInt(parts[2], 10) || undefined }));
+}
+
+/**
+ * Подсказки для строки «какую книгу читаете». Пул отдаётся сразу, каталог и
+ * модель дополняют его по мере ответа — поэтому это генератор: строка успевает
+ * показать мгновенные совпадения, не дожидаясь сети.
+ *
+ * @param {string} q Запрос читателя.
+ * @param {string} lang Язык интерфейса.
+ * @param {(items: object[]) => void} onUpdate Вызывается на каждом источнике.
+ */
+export async function searchBooks(q, lang, onUpdate) {
+  const query = q.trim();
+  if (query.length < 3) { onUpdate([]); return; }
+
+  const seen = new Map();
+  const out = [];
+  const add = (items) => {
+    let grew = false;
+    for (const b of items) {
+      if (!b.t) continue;
+      const k = suggestKey(b);
+      const prev = seen.get(k);
+      if (prev) {
+        // Пул отвечает первым, но года не хранит. Повтор здесь — повод
+        // дополнить уже показанную строку, а не выбросить находку.
+        if (b.y && !prev.y) { prev.y = b.y; grew = true; }
+        continue;
+      }
+      seen.set(k, b);
+      out.push(b);
+      grew = true;
+    }
+    if (grew) onUpdate(out.slice(0, 10));
+  };
+
+  add(poolMatches(query, lang));
+  try { add(await modelMatches(query, lang)); } catch {}
+  onUpdate(out.slice(0, 10));
 }
 
 async function recommendNext(chats, lang, mood) {
@@ -1045,6 +1137,25 @@ function Setup({ t, lang, pro, onStart, onBack }) {
   const [total, setTotal] = useState("");
   const [companion, setCompanion] = useState(null);
   const [searching, setSearching] = useState(false);
+  const [author, setAuthor] = useState("");
+  const [sugg, setSugg] = useState([]);
+  const [suggBusy, setSuggBusy] = useState(false);
+  // Выбор из подсказок сам меняет поле ввода. Без этого флага такая правка
+  // выглядела бы как новый запрос, и список открывался бы заново.
+  const justPicked = useRef(false);
+
+  useEffect(() => {
+    if (justPicked.current) { justPicked.current = false; return; }
+    const q = book.trim();
+    if (q.length < 3) { setSugg([]); setSuggBusy(false); return; }
+    let alive = true;
+    setSuggBusy(true);
+    const id = setTimeout(() => {
+      searchBooks(q, lang, (items) => { if (alive) setSugg(items); })
+        .finally(() => { if (alive) setSuggBusy(false); });
+    }, 450);
+    return () => { alive = false; clearTimeout(id); };
+  }, [book, lang]);
   const ready = book.trim() && progress.trim() && companion;
   const label = { display: "block", fontSize: 11, color: T.gold, margin: "18px 0 8px", fontFamily: "'Press Start 2P', monospace", lineHeight: 1.6 };
 
@@ -1063,7 +1174,24 @@ function Setup({ t, lang, pro, onStart, onBack }) {
         <h1 className="pxfont" style={{ fontSize: 18, color: T.gold, textAlign: "center", margin: "14px 0 4px", textShadow: `3px 3px 0 ${T.outline}` }}>{t("newTitle")}</h1>
 
         <label style={label}>{t("whichBook")}</label>
-        <input value={book} onChange={(e) => setBook(e.target.value)} placeholder={t("bookPh")} style={inputStyle} />
+        <input value={book} onChange={(e) => { setBook(e.target.value); setAuthor(""); }} placeholder={t("bookPh")} style={inputStyle} />
+        {(suggBusy || sugg.length > 0) && (
+          <div style={{ ...px(T.outline), background: T.panelSolid, marginTop: 6, maxHeight: 280, overflowY: "auto" }}>
+            {suggBusy && !sugg.length && (
+              <div className="hand" style={{ padding: "11px 13px", color: T.muted, fontSize: 17 }}>{t("searching")}<span className="cursor" /></div>
+            )}
+            {sugg.map((b, i) => (
+              <button key={`${b.t}-${i}`} onClick={() => { justPicked.current = true; setBook(b.t); setAuthor(b.a); setSugg([]); setSuggBusy(false); }}
+                style={{ display: "flex", gap: 10, alignItems: "center", width: "100%", textAlign: "left", background: "transparent", border: "none", borderBottom: `2px solid ${T.outline}`, padding: "9px 12px", cursor: "pointer" }}>
+                <span style={{ width: 22, height: 34, flexShrink: 0, background: spineColor(b.t), border: `2px solid ${T.outline}` }} />
+                <span style={{ minWidth: 0 }}>
+                  <span className="hand" style={{ display: "block", fontSize: 18, color: T.white, lineHeight: 1.15 }}>{b.t}</span>
+                  <span className="hand" style={{ display: "block", fontSize: 15, color: T.muted, lineHeight: 1.2 }}>{b.a}{b.y ? ` · ${b.y}` : ""}</span>
+                </span>
+              </button>
+            ))}
+          </div>
+        )}
 
         <label style={label}>{t("whereNow")}</label>
         <input value={progress} onChange={(e) => setProgress(e.target.value)} placeholder={t("wherePh")} style={inputStyle} />
@@ -1101,7 +1229,7 @@ function Setup({ t, lang, pro, onStart, onBack }) {
         </div>
 
         <button disabled={!ready}
-          onClick={() => onStart({ book: book.trim(), progress: progress.trim(), companionId: companion.id, bookInfo: bookInfo.trim(), goal: goal.trim(), total: total.trim() })}
+          onClick={() => onStart({ book: book.trim(), author: author.trim(), progress: progress.trim(), companionId: companion.id, bookInfo: bookInfo.trim(), goal: goal.trim(), total: total.trim() })}
           className="pxfont" style={{ width: "100%", marginTop: 26, padding: "16px 0", fontSize: 13, ...pxButton(ready) }}>
           {t("start")}
         </button>
