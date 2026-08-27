@@ -24,7 +24,7 @@ export default async (request) => {
     );
   }
 
-  const { status, body } = await handleClaudeRequest(input);
+  const { status, body } = await handleClaudeRequest(input, (request.headers.get("x-forwarded-for") || "").split(",")[0].trim());
   return Response.json(body, { status, headers: cors });
 };
 

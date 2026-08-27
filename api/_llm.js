@@ -34,6 +34,51 @@ function selectedProvider() {
 }
 
 const MAX_TOKENS_CAP = 16000;
+
+/**
+ * Ограничитель частоты. Эндпоинт публичный, а каждый запрос стоит денег у
+ * провайдера, поэтому один адрес не может дёргать его бесконечно: проверено
+ * с постороннего сервера, что без лимита бюджет доступен любому скрипту.
+ *
+ * Память процесса — а не внешняя база — потому что серверлес-инстанс живёт
+ * между вызовами тёплым: наивный однопоточный скрипт упрётся в лимит, а
+ * распределённую атаку остановит только бюджет-лимит у провайдера, который
+ * стоит выставить в любом случае. Живому читателю лимита хватает с запасом:
+ * это ~восемь сообщений в минуту без перерыва.
+ */
+const RATE_WINDOW_MS = 5 * 60 * 1000;
+const RATE_MAX_REQUESTS = 40;
+const rateBuckets = new Map();
+
+class TooManyRequests extends Error {
+  constructor(message) {
+    super(message);
+    this.status = 429;
+  }
+}
+
+export function checkRateLimit(ip) {
+  const key = String(ip || "unknown");
+  const now = Date.now();
+  // Прибираем истёкшие корзины, чтобы карта не росла вечно на длинной жизни
+  // инстанса. Обход на каждый запрос дёшев: адресов в окне немного.
+  for (const [k, b] of rateBuckets) {
+    if (b.resetAt <= now) rateBuckets.delete(k);
+  }
+  const bucket = rateBuckets.get(key) || { count: 0, resetAt: now + RATE_WINDOW_MS };
+  bucket.count += 1;
+  rateBuckets.set(key, bucket);
+  if (bucket.count > RATE_MAX_REQUESTS) {
+    throw new TooManyRequests("Слишком много запросов — подождите пару минут.");
+  }
+}
+
+/** Первый адрес из x-forwarded-for: за прокси именно он — клиент. */
+export function clientIp(headers) {
+  const fwd = headers?.["x-forwarded-for"];
+  if (typeof fwd === "string" && fwd) return fwd.split(",")[0].trim();
+  return "";
+}
 const MAX_MESSAGES = 80;
 const MAX_CHARS = 400_000;
 
@@ -101,7 +146,12 @@ function buildRequest(input) {
  * @param {unknown} input Parsed JSON request body from the client.
  * @returns {Promise<{status: number, body: object}>} Never throws.
  */
-export async function handleClaudeRequest(input) {
+export async function handleClaudeRequest(input, ip) {
+  try {
+    checkRateLimit(ip);
+  } catch (e) {
+    return { status: 429, body: { error: { type: "rate_limited", message: e.message } } };
+  }
   const name = selectedProvider();
   const provider = PROVIDERS[name];
   if (!provider) {

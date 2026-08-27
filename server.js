@@ -125,7 +125,7 @@ async function handle(req, res) {
     } catch {
       return sendJson(res, 400, { error: { type: "invalid_request_error", message: "Body is not valid JSON" } }, cors);
     }
-    const { status, body } = await handleClaudeRequest(input);
+    const { status, body } = await handleClaudeRequest(input, (req.headers["x-forwarded-for"] || "").split(",")[0].trim() || req.socket?.remoteAddress);
     return sendJson(res, status, body, cors);
   }
 

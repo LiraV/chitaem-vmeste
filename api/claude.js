@@ -24,6 +24,6 @@ export default async function handler(req, res) {
     }
   }
 
-  const { status, body } = await handleClaudeRequest(input);
+  const { status, body } = await handleClaudeRequest(input, (req.headers["x-forwarded-for"] || "").split(",")[0].trim() || req.socket?.remoteAddress);
   return res.status(status).json(body);
 }

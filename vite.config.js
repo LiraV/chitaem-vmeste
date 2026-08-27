@@ -59,7 +59,7 @@ function claudeApiDevServer(env) {
         // Imported lazily so edits to the handler are picked up on restart
         // without the plugin holding a stale copy.
         const { handleClaudeRequest } = await import("./api/_llm.js");
-        const { status, body } = await handleClaudeRequest(input);
+        const { status, body } = await handleClaudeRequest(input, req.socket?.remoteAddress);
         return json(status, body);
       });
     },
