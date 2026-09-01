@@ -36,17 +36,22 @@ function selectedProvider() {
 const MAX_TOKENS_CAP = 16000;
 
 /**
- * Ограничитель частоты. Эндпоинт публичный, а каждый запрос стоит денег у
- * провайдера, поэтому один адрес не может дёргать его бесконечно: проверено
- * с постороннего сервера, что без лимита бюджет доступен любому скрипту.
+ * Ограничитель частоты.
  *
- * Память процесса — а не внешняя база — потому что серверлес-инстанс живёт
- * между вызовами тёплым: наивный однопоточный скрипт упрётся в лимит, а
- * распределённую атаку остановит только бюджет-лимит у провайдера, который
- * стоит выставить в любом случае. Живому читателю лимита хватает с запасом:
- * это ~восемь сообщений в минуту без перерыва.
+ * Эндпоинт публичный, а каждый запрос стоит денег у провайдера: проверено с
+ * постороннего сервера, что без лимита бюджет доступен любому скрипту.
+ *
+ * Считаем в общем хранилище (Upstash Redis по REST — у Vercel он ставится из
+ * маркетплейса в пару кликов и сам прописывает переменные). Это не украшение:
+ * на serverless каждый запрос может обслужить отдельный инстанс со своей
+ * памятью — в замере по проду три подряд ответа пришли от трёх разных, и
+ * счётчик в памяти процесса их попросту не видел.
+ *
+ * Пока хранилище не подключено, работает запасной счётчик в памяти. Он ловит
+ * наивный цикл, попавший на один инстанс, но сплошной защитой не является —
+ * настоящий предел ущерба задаёт лимит расходов в кабинете провайдера.
  */
-const RATE_WINDOW_MS = 5 * 60 * 1000;
+const RATE_WINDOW_SEC = 300;
 const RATE_MAX_REQUESTS = 40;
 const rateBuckets = new Map();
 
@@ -57,20 +62,51 @@ class TooManyRequests extends Error {
   }
 }
 
-export function checkRateLimit(ip) {
-  const key = String(ip || "unknown");
+const RATE_MESSAGE = "Слишком много запросов — подождите пару минут.";
+
+/**
+ * Счётчик в общем хранилище. Возвращает число обращений за окно или null,
+ * если хранилище не настроено либо не ответило: молчаливый откат к памяти
+ * лучше, чем отказ обслуживать читателей из-за недоступного Redis.
+ */
+async function sharedHits(key) {
+  const url = (process.env.UPSTASH_REDIS_REST_URL || "").replace(/\/+$/, "");
+  const token = process.env.UPSTASH_REDIS_REST_TOKEN;
+  if (!url || !token) return null;
+  try {
+    const res = await fetch(`${url}/pipeline`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+      // EXPIRE ... NX ставит срок только при первом INCR, поэтому окно
+      // отсчитывается от первого запроса и не продлевается следующими.
+      body: JSON.stringify([["INCR", key], ["EXPIRE", key, String(RATE_WINDOW_SEC), "NX"]]),
+      signal: AbortSignal.timeout(2000),
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    const count = Number(Array.isArray(data) ? data[0]?.result : NaN);
+    return Number.isFinite(count) ? count : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Запасной счётчик в памяти инстанса. */
+function memoryHits(key) {
   const now = Date.now();
-  // Прибираем истёкшие корзины, чтобы карта не росла вечно на длинной жизни
-  // инстанса. Обход на каждый запрос дёшев: адресов в окне немного.
   for (const [k, b] of rateBuckets) {
     if (b.resetAt <= now) rateBuckets.delete(k);
   }
-  const bucket = rateBuckets.get(key) || { count: 0, resetAt: now + RATE_WINDOW_MS };
+  const bucket = rateBuckets.get(key) || { count: 0, resetAt: now + RATE_WINDOW_SEC * 1000 };
   bucket.count += 1;
   rateBuckets.set(key, bucket);
-  if (bucket.count > RATE_MAX_REQUESTS) {
-    throw new TooManyRequests("Слишком много запросов — подождите пару минут.");
-  }
+  return bucket.count;
+}
+
+export async function checkRateLimit(ip) {
+  const key = `rl:${ip || "unknown"}`;
+  const hits = (await sharedHits(key)) ?? memoryHits(key);
+  if (hits > RATE_MAX_REQUESTS) throw new TooManyRequests(RATE_MESSAGE);
 }
 
 /** Первый адрес из x-forwarded-for: за прокси именно он — клиент. */
@@ -148,7 +184,7 @@ function buildRequest(input) {
  */
 export async function handleClaudeRequest(input, ip) {
   try {
-    checkRateLimit(ip);
+    await checkRateLimit(ip);
   } catch (e) {
     return { status: 429, body: { error: { type: "rate_limited", message: e.message } } };
   }
